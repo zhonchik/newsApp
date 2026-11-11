@@ -25,6 +25,7 @@ import SwiftData
     var queued: Bool = false
     var read: Bool = false
     var extracted: Bool = false
+    var richExtracted: Bool = false
     init(item: RemoteArticle, subscription: Subscription) {
         key = subscription.id.uuidString + ":" + item.id
         subscriptionID = subscription.id; title = item.title; source = subscription.name

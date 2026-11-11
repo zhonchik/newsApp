@@ -95,11 +95,11 @@ struct ReaderView: View {
         restore()
     }
     @MainActor private func extractCurrent() async {
-        guard let article = current, (!article.extracted || article.html.isEmpty), URL(string: article.url)?.host != "t.me" else { return }
+        guard let article = current, !article.richExtracted, URL(string: article.url)?.host != "t.me" else { return }
         do {
             let html = try await service.articleText(url: article.url)
             guard !Task.isCancelled, !html.isEmpty else { return }
-            article.html = html; article.text = (try? SwiftSoup.parse(html).text()) ?? article.text; article.extracted = true; save()
+            article.html = html; article.text = (try? SwiftSoup.parse(html).text()) ?? article.text; article.extracted = true; article.richExtracted = true; save()
         } catch { /* Retain feed content offline and retry next time. */ }
     }
 }

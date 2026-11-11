@@ -5,7 +5,9 @@ A universal SwiftUI news reader for iPhone, iPad and Mac. One article, room to r
 ## Included
 
 - One oldest-to-newest stream across RSS, Atom and public Telegram channels.
-- One article on screen, horizontal swipe navigation and accessible previous/next buttons.
+- One article on screen, horizontal swipe navigation, VoiceOver previous/next actions, and Mac arrow keys.
+- Unread count across visible stories; opening an article marks it read.
+- Article headings, paragraphs, lists, links, emphasis and images are retained in a sanitized HTML reader. Publisher scripts are disabled. Images load from publishers and may require connectivity; publisher page styling is replaced with system-aware reader styling.
 - Last-selected article restored on launch. Refresh preserves your current article.
 - Full article extraction using Mozilla Readability locally; feed text remains available when extraction fails.
 - Pause a subscription while collecting new items into a persisted queue; resume releases its backlog in publication order. Existing visible stories stay readable.
@@ -44,7 +46,7 @@ The app downloads RSS/Atom and public Telegram pages directly with URLSession. M
 
 Collection runs at launch, on returning to the foreground, and on manual refresh. It does not continuously collect while the app is closed. Publisher feeds and Telegram public previews expose finite recent windows, so old items can be missed during long absences or pauses. Telegram media-only posts and private channels are not supported. Private channel access and reliable historical backfill need an authenticated Telegram client integration. Public preview parsing may need updates if Telegram changes its HTML.
 
-Full-text extraction cannot guarantee access to paywalled, blocked or JavaScript-only content. A failure preserves original feed text and the source link. Full text is fetched when an RSS article is selected; unread items retain feed text until opened. Telegram posts retain their original message text.
+Full-text extraction cannot guarantee access to paywalled, blocked or JavaScript-only content. A failure preserves original feed text and the source link. Full text is fetched when an RSS article is selected; unread items retain feed text until opened. Telegram posts retain message formatting and public preview photos. Existing RSS articles are enriched again when opened to restore formatting.
 
 CloudKit sync is eventual. Simultaneous imports on separate devices can create duplicates because CloudKit-backed SwiftData does not support unique constraints. Concurrent pause changes resolve through CloudKit synchronization. Reading position uses the most recently changed record; scroll offset within an article is not restored. Calendar-based pauses from tgRssBot are outside this initial version.
 
