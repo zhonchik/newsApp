@@ -25,7 +25,7 @@ struct FeedService {
                 let id = try post.attr("data-post")
                 let text = try post.select(".tgme_widget_message_text").text()
                 guard !text.isEmpty, !id.isEmpty, let date = Self.date(try post.select("time").attr("datetime")) else { return nil }
-                return RemoteArticle(id: id, title: String(text.prefix(100)), url: "https://t.me/" + id, text: text, published: date)
+                return RemoteArticle(id: id, title: String(text.prefix(100)), url: "https://t.me/" + id, text: text, published: date, html: try post.select(".tgme_widget_message_text").html() + Self.telegramImages(post))
             }
         }
         let data = try await fetch(subscription.address)
@@ -35,6 +35,19 @@ struct FeedService {
         let data = try await fetch(url)
         let extractor = ArticleExtractor()
         return try await extractor.extract(String(decoding: data, as: UTF8.self), url: url)
+    }
+    private static func telegramImages(_ post: Element) throws -> String {
+        var html = ""
+        for photo in try post.select(".tgme_widget_message_photo_wrap") {
+            let style = try photo.attr("style")
+            if let expression = try? NSRegularExpression(pattern: "url\\(['\"]?(.*?)['\"]?\\)"),
+               let match = expression.firstMatch(in: style, range: NSRange(style.startIndex..., in: style)),
+               let range = Range(match.range(at: 1), in: style) {
+                let source = String(style[range]).replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
+                html += "<p><img src=\"\(source)\"></p>"
+            }
+        }
+        return html
     }
     static func date(_ raw: String) -> Date? {
         let iso = ISO8601DateFormatter()
@@ -64,6 +77,10 @@ final class FeedParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String]) {
         element = name
         if name == "item" || name == "entry" { active = true; fields = [:] }
+        if active, ["media:content", "media:thumbnail", "enclosure"].contains(name),
+           let image = attributes["url"], name != "enclosure" || (attributes["type"] ?? "").hasPrefix("image/") {
+            fields["image"] = image
+        }
         if active, name == "link", let href = attributes["href"], attributes["rel"] == nil || attributes["rel"] == "alternate" { fields["link"] = href }
     }
     func parser(_ parser: XMLParser, foundCharacters string: String) { if active { fields[element, default: ""] += string } }
@@ -74,9 +91,13 @@ final class FeedParser: NSObject, XMLParserDelegate {
         func field(_ key: String) -> String { fields[key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines) }
         let url = field("link"), id = field("guid").isEmpty ? field("id") : field("guid")
         guard let date = FeedService.date(["pubDate", "published", "updated", "dc:date"].map(field).first(where: { !$0.isEmpty }) ?? ""), !url.isEmpty else { return }
-        let html = ["content:encoded", "content", "description", "summary"].map(field).first(where: { !$0.isEmpty }) ?? ""
+        var html = ["content:encoded", "content", "description", "summary"].map(field).first(where: { !$0.isEmpty }) ?? ""
+        if !field("image").isEmpty, !html.contains("<img") {
+            let image = field("image").replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
+            html = "<img src=\"\(image)\">" + html
+        }
         let text = (try? SwiftSoup.parse(html).text()) ?? html
-        items.append(RemoteArticle(id: id.isEmpty ? url : id, title: field("title"), url: url, text: text, published: date))
+        items.append(RemoteArticle(id: id.isEmpty ? url : id, title: field("title"), url: url, text: text, published: date, html: html))
     }
 }
 
@@ -88,7 +109,7 @@ final class FeedParser: NSObject, XMLParserDelegate {
         guard let resource = Bundle.main.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
         let library = try String(contentsOf: resource, encoding: .utf8)
         let encoded = String(data: try JSONSerialization.data(withJSONObject: [html]), encoding: .utf8)!
-        script = library + "\nconst doc = new DOMParser().parseFromString(\(encoded)[0], 'text/html'); new Readability(doc).parse()?.textContent || '';"
+        script = library + "\nconst doc = new DOMParser().parseFromString(\(encoded)[0], 'text/html'); const base = doc.createElement('base'); base.href = document.baseURI; doc.head.appendChild(base); new Readability(doc).parse()?.content || '';"
         let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: .zero, configuration: configuration); webView.navigationDelegate = self
         return try await withCheckedThrowingContinuation { continuation in

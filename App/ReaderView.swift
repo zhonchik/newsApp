@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import SwiftSoup
 
 struct ReaderView: View {
     @Environment(\.modelContext) private var context
@@ -19,36 +20,9 @@ struct ReaderView: View {
         NavigationStack {
             Group {
                 if let article = current {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 24) {
-                                Color.clear.frame(height: 0).id("top")
-                                HStack { Label(article.source, systemImage: "dot.radiowaves.left.and.right"); Spacer(); Text(article.published, style: .date) }
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(article.title).font(.system(.largeTitle, design: .serif, weight: .bold)).accessibilityAddTraits(.isHeader)
-                                Rectangle().fill(.tint).frame(width: 40, height: 3)
-                                Text(article.text.isEmpty ? "No article text is available. Open the original to read this story." : article.text)
-                                    .font(.system(.title3, design: .serif)).lineSpacing(8).textSelection(.enabled)
-                                if let url = URL(string: article.url) { Link(destination: url) { Label("Read original", systemImage: "arrow.up.right") }.font(.callout) }
-                                Text(article.extracted ? "Reader text · Available offline" : "Feed text · Available offline")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }.frame(maxWidth: 680, alignment: .leading).padding(28).frame(maxWidth: .infinity)
-                        }
-                        .onChange(of: selected) { _, _ in proxy.scrollTo("top", anchor: .top) }
-                    }
-                    .gesture(DragGesture(minimumDistance: 45).onEnded { value in
-                        guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                        move(value.translation.width < 0 ? 1 : -1)
-                    })
-                    .safeAreaInset(edge: .bottom) {
-                        HStack {
-                            Button { move(-1) } label: { Label("Previous", systemImage: "chevron.left") }.disabled(index == 0)
-                            Spacer()
-                            Text("\(index + 1) of \(feed.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            Spacer()
-                            Button { move(1) } label: { Label("Next", systemImage: "chevron.right") }.disabled(index + 1 >= feed.count)
-                        }.padding().background(.bar)
-                    }
+                    ArticleWebView(article: article, move: move)
+                        .accessibilityAction(named: "Next article") { move(1) }
+                        .accessibilityAction(named: "Previous article") { move(-1) }
                 } else {
                     ContentUnavailableView {
                         Label("A little more perspective.", systemImage: "text.page")
@@ -59,8 +33,12 @@ struct ReaderView: View {
                     }
                 }
             }
-            .navigationTitle("Current")
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("\(feed.filter { !$0.read }.count) unread")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        .accessibilityLabel("\(feed.filter { !$0.read }.count) unread articles")
+                }
                 ToolbarItem { Button { showSubscriptions = true } label: { Label("Subscriptions", systemImage: "slider.horizontal.3") } }
                 ToolbarItem { Button { Task { await refresh() } } label: {
                     if refreshing { ProgressView() } else { Label("Refresh", systemImage: "arrow.clockwise") }
@@ -107,6 +85,7 @@ struct ReaderView: View {
                 for item in items {
                     let key = subscription.id.uuidString + ":" + item.id
                     if known.insert(key).inserted { context.insert(Article(item: item, subscription: subscription)) }
+                    else if let existing = articles.first(where: { $0.key == key }), existing.html.isEmpty { existing.html = item.html }
                 }
                 // Resume releases the backlog; pausing never removes previously visible stories.
                 if !subscription.paused { for a in articles where a.subscriptionID == subscription.id { a.queued = false } }
@@ -116,11 +95,11 @@ struct ReaderView: View {
         restore()
     }
     @MainActor private func extractCurrent() async {
-        guard let article = current, !article.extracted, URL(string: article.url)?.host != "t.me" else { return }
+        guard let article = current, (!article.extracted || article.html.isEmpty), URL(string: article.url)?.host != "t.me" else { return }
         do {
-            let text = try await service.articleText(url: article.url)
-            guard !Task.isCancelled, !text.isEmpty else { return }
-            article.text = text; article.extracted = true; save()
+            let html = try await service.articleText(url: article.url)
+            guard !Task.isCancelled, !html.isEmpty else { return }
+            article.html = html; article.text = (try? SwiftSoup.parse(html).text()) ?? article.text; article.extracted = true; save()
         } catch { /* Retain feed content offline and retry next time. */ }
     }
 }
