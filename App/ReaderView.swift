@@ -4,7 +4,7 @@ import SwiftData
 struct ReaderView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var phase
-    @Query(sort: [SortDescriptor(Article.published), SortDescriptor(Article.key)]) private var articles: [Article]
+    @Query(sort: [SortDescriptor(\Article.published), SortDescriptor(\Article.key)]) private var articles: [Article]
     @Query private var subscriptions: [Subscription]
     @Query(sort: \ReadingPosition.changed, order: .reverse) private var positions: [ReadingPosition]
     @AppStorage("serviceURL") private var serviceURL = ""
