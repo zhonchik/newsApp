@@ -3,9 +3,21 @@ on: [push, pull_request]
 jobs:
   apple:
     runs-on: macos-15
+    strategy:
+      matrix:
+        scheme: [Current, CurrentLocal]
     steps:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
       - run: xcodegen generate
-      - run: xcodebuild -scheme Current -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
-      - run: xcodebuild -scheme Current -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+      - run: xcodebuild -scheme ${{ matrix.scheme }} -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - run: xcodebuild -scheme ${{ matrix.scheme }} -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+      - name: Check local signing capabilities
+        if: matrix.scheme == 'CurrentLocal'
+        run: |
+          python3 - <<'PYCODE'
+          import plistlib
+          with open('Configuration/CurrentLocal.entitlements', 'rb') as file:
+              entitlements = plistlib.load(file)
+          assert not any('icloud' in key or 'aps-environment' in key for key in entitlements)
+          PYCODE

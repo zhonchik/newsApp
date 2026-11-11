@@ -6,7 +6,11 @@ import SwiftData
     init() {
         do {
             let schema = Schema([Subscription.self, Article.self, ReadingPosition.self])
+            #if LOCAL_ONLY
+            let config = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
+            #else
             let config = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
+            #endif
             container = try ModelContainer(for: schema, configurations: [config])
         } catch {
             fatalError("Unable to open the article library: \(error)")

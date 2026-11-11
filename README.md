@@ -22,7 +22,17 @@ xcodegen generate
 open Current.xcodeproj
 ```
 
-Select your Apple development team. Change `com.currentreader.Current` and `iCloud.com.currentreader.Current` in `project.yml` to identifiers owned by your team, then regenerate. Enable iCloud/CloudKit and remote notifications in Signing & Capabilities. Sign into iCloud on each device using the same Apple ID. Deploy the development CloudKit schema to production before distribution. CloudKit requires compatible signing, provisioning and an enabled container; there is no claim of verified sync until tested with your account.
+### Free Apple Account: local-only installation
+
+Choose the **CurrentLocal** scheme and target in Xcode. In Signing & Capabilities, select your **Personal Team**, leave automatic signing enabled, and set a unique bundle identifier (for example `com.yourname.Current.local`). Connect your iPhone, enable Developer Mode, select it as the destination, and press Run (⌘R).
+
+This target explicitly disables CloudKit and has no iCloud or push notification entitlements. RSS, Telegram, extraction, offline storage, reading position and pause/resume work on device. Nothing syncs to other devices. Free provisioning expires after seven days; rebuild and reinstall through Xcode when needed. Keep the bundle identifier consistent to retain the same app container; deleting the app deletes its local library.
+
+CurrentLocal installs as **Current Local** with a separate bundle identifier and library, so it can coexist with the iCloud edition. Switching editions does not migrate articles or subscriptions automatically.
+
+### iCloud edition: paid developer team
+
+Choose the **Current** scheme and target. Select your Apple development team. Change `com.currentreader.Current` and `iCloud.com.currentreader.Current` in `project.yml` to identifiers owned by your team, then regenerate. Enable iCloud/CloudKit and remote notifications in Signing & Capabilities. Sign into iCloud on each device using the same Apple ID. Deploy the development CloudKit schema to production before distribution. CloudKit requires compatible signing, provisioning and an enabled container; there is no claim of verified sync until tested with your account.
 
 Run the Current scheme on an iPhone, iPad or My Mac. In Subscriptions, add a feed URL or public Telegram username. No sample stories are mixed into your library.
 
