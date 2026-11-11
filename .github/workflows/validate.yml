@@ -1,19 +1,6 @@
 name: Validate
 on: [push, pull_request]
 jobs:
-  service:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: Service
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: Service/go.mod
-          cache-dependency-path: Service/go.sum
-      - run: go test -race ./...
-      - run: go vet ./...
   apple:
     runs-on: macos-15
     steps:

@@ -7,7 +7,6 @@ struct ReaderView: View {
     @Query(sort: [SortDescriptor(\Article.published), SortDescriptor(\Article.key)]) private var articles: [Article]
     @Query private var subscriptions: [Subscription]
     @Query(sort: \ReadingPosition.changed, order: .reverse) private var positions: [ReadingPosition]
-    @AppStorage("serviceURL") private var serviceURL = ""
     @State private var selected = ""
     @State private var showSubscriptions = false
     @State private var refreshing = false
@@ -15,10 +14,7 @@ struct ReaderView: View {
     private var feed: [Article] { articles.filter { !$0.queued } }
     private var current: Article? { feed.first { $0.key == selected } }
     private var index: Int { feed.firstIndex { $0.key == selected } ?? 0 }
-    private var service: FeedService? {
-        guard let url = URL(string: serviceURL), url.scheme == "https", url.host != nil else { return nil }
-        return FeedService(base: url)
-    }
+    private let service = FeedService()
     var body: some View {
         NavigationStack {
             Group {
@@ -103,7 +99,6 @@ struct ReaderView: View {
     private func save() { do { try context.save() } catch { errorMessage = error.localizedDescription } }
     @MainActor private func refresh() async {
         guard !refreshing, !subscriptions.isEmpty else { return }
-        guard let service else { errorMessage = "Set your HTTPS reading service URL in Subscriptions."; return }
         refreshing = true; defer { refreshing = false }
         var known = Set(articles.map(\.key))
         for subscription in subscriptions {
@@ -121,7 +116,7 @@ struct ReaderView: View {
         restore()
     }
     @MainActor private func extractCurrent() async {
-        guard let article = current, !article.extracted, URL(string: article.url)?.host != "t.me", let service else { return }
+        guard let article = current, !article.extracted, URL(string: article.url)?.host != "t.me" else { return }
         do {
             let text = try await service.articleText(url: article.url)
             guard !Task.isCancelled, !text.isEmpty else { return }

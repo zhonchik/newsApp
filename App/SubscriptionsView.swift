@@ -6,7 +6,6 @@ struct SubscriptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Subscription.created) private var subscriptions: [Subscription]
     @Query private var articles: [Article]
-    @AppStorage("serviceURL") private var serviceURL = ""
     @State private var name = ""
     @State private var address = ""
     @State private var kind = "rss"
@@ -20,12 +19,6 @@ struct SubscriptionsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    TextField("https://reader.example.com", text: $serviceURL)
-                        .autocorrectionDisabled()
-                } header: { Text("Reading service") } footer: {
-                    Text("Your self-hosted service collects public feeds and extracts full articles. Your library stays on your devices and syncs through your private iCloud database.")
-                }
                 Section("Your subscriptions") {
                     if subscriptions.isEmpty { Text("Your stream starts here.").foregroundStyle(.secondary) }
                     ForEach(subscriptions) { subscription in
