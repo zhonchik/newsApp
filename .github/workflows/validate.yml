@@ -1,0 +1,24 @@
+name: Validate
+on: [push, pull_request]
+jobs:
+  service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Service/go.mod
+          cache-dependency-path: Service/go.sum
+      - run: go test -race ./...
+      - run: go vet ./...
+  apple:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - run: xcodebuild -scheme Current -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - run: xcodebuild -scheme Current -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
