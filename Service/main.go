@@ -113,6 +113,9 @@ func rss(ctx context.Context, raw string) ([]Article, error) {
 	if e != nil {
 		return nil, e
 	}
+	return parseRSS(b)
+}
+func parseRSS(b []byte) ([]Article, error) {
 	f, e := gofeed.NewParser().ParseString(string(b))
 	if e != nil {
 		return nil, e
@@ -150,6 +153,9 @@ func telegram(ctx context.Context, channel string) ([]Article, error) {
 	if e != nil {
 		return nil, e
 	}
+	return parseTelegram(b)
+}
+func parseTelegram(b []byte) ([]Article, error) {
 	d, e := goquery.NewDocumentFromReader(strings.NewReader(string(b)))
 	if e != nil {
 		return nil, e
