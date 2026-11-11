@@ -15,6 +15,13 @@ final class ReaderContentTests: XCTestCase {
         XCTAssertTrue(result.contains("https://bc.f1ne.ws/"))
         XCTAssertFalse(result.contains("https://c.f1news.ru/"))
     }
+    func testNPlusOneLeadPhotoSurvivesUnrelatedExtractedImages() throws {
+        let photo = "https://minio.nplus1.ru/app-images/media-revisions/1153047/cover-share.png"
+        let result = try ReaderContent.html(body: "<img src='https://staticn1.nplus1.ru/image-new/logo.svg'><p>Full story</p>", feed: "<img src='\(photo)'><p>Summary</p>", baseURL: "https://nplus1.ru/news/2026/11/11/obesity-vs-obesity")
+        XCTAssertTrue(result.contains(photo))
+        XCTAssertTrue(result.contains("Full story"))
+        XCTAssertFalse(result.contains("Summary"))
+    }
     func testUnsafeFeedMarkupIsNotInserted() throws {
         let result = try ReaderContent.html(body: "<p>Article</p>", feed: "<script>alert(1)</script><img src='javascript:alert(1)'>", baseURL: base)
         XCTAssertFalse(result.contains("script"))

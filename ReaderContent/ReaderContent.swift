@@ -2,7 +2,7 @@ import Foundation
 import SwiftSoup
 
 public enum ReaderContent {
-    /// Preserve publisher feed photos if full-text extraction drops every image.
+    /// Preserve publisher feed photos when full-text extraction omits them.
     /// Resolve relative URLs before sanitizing so WebKit and the cleaner agree.
     public static func html(body: String, feed: String, baseURL: String) throws -> String {
         let document = try SwiftSoup.parse(body, baseURL)
@@ -10,13 +10,16 @@ public enum ReaderContent {
             let absolute = try image.absUrl("src")
             if !absolute.isEmpty { try image.attr("src", absolute) }
         }
-        if try document.select("img[src]").isEmpty() {
+        let extractedPaths = Set(try document.select("img[src]").compactMap { image in
+            URL(string: try image.absUrl("src"))?.path
+        })
+        do {
             let fallback = try SwiftSoup.parse(feed, baseURL)
             var seen = Set<String>()
             var photos = ""
             for image in try fallback.select("img[src]") {
                 let absolute = try image.absUrl("src")
-                guard URL(string: absolute)?.scheme == "https", seen.insert(absolute).inserted else { continue }
+                guard let url = URL(string: absolute), url.scheme == "https", !extractedPaths.contains(url.path), seen.insert(absolute).inserted else { continue }
                 try image.attr("src", absolute)
                 photos += try image.outerHtml()
             }
