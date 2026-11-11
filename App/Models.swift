@@ -21,6 +21,7 @@ import SwiftData
     var url: String = ""
     var text: String = ""
     var html: String = ""
+    var feedHTML: String = ""
     var published: Date = Date()
     var queued: Bool = false
     var read: Bool = false
@@ -29,7 +30,7 @@ import SwiftData
     init(item: RemoteArticle, subscription: Subscription) {
         key = subscription.id.uuidString + ":" + item.id
         subscriptionID = subscription.id; title = item.title; source = subscription.name
-        url = item.url; text = item.text; html = item.html; published = item.published; queued = subscription.paused
+        url = item.url; text = item.text; html = item.html; feedHTML = item.html; published = item.published; queued = subscription.paused
     }
 }
 

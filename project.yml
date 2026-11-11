@@ -17,7 +17,7 @@ targetTemplates:
   ReaderApp:
     type: application
     supportedDestinations: [iOS, macOS]
-    sources: [App]
+    sources: [App, ReaderContent]
     dependencies:
       - package: SwiftSoup
     settings:

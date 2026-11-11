@@ -9,6 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
+      - run: swift test
       - run: xcodegen generate
       - run: xcodebuild -scheme ${{ matrix.scheme }} -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
       - run: xcodebuild -scheme ${{ matrix.scheme }} -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build

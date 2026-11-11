@@ -85,7 +85,10 @@ struct ReaderView: View {
                 for item in items {
                     let key = subscription.id.uuidString + ":" + item.id
                     if known.insert(key).inserted { context.insert(Article(item: item, subscription: subscription)) }
-                    else if let existing = articles.first(where: { $0.key == key }), existing.html.isEmpty { existing.html = item.html }
+                    else if let existing = articles.first(where: { $0.key == key }) {
+                        existing.feedHTML = item.html
+                        if existing.html.isEmpty { existing.html = item.html }
+                    }
                 }
                 // Resume releases the backlog; pausing never removes previously visible stories.
                 if !subscription.paused { for a in articles where a.subscriptionID == subscription.id { a.queued = false } }
