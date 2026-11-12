@@ -2,16 +2,41 @@ import Foundation
 import SwiftSoup
 
 public enum ContentRules {
-    public static let revision = 3
+    public static let revision = 4
     public static let telegramNotice = "НАСТОЯЩИЙ МАТЕРИАЛ ПРОИЗВЕДЕН ИНОСТРАННЫМ АГЕНТОМ ГАЛЛЯМОВЫМ АББАСОМ РАДИКОВИЧЕМ. 18+"
+    public static let telegramNoticeVariant = telegramNotice.replacingOccurrences(of: "ПРОИЗВЕДЕН ИНОСТРАННЫМ", with: "ПРОИЗВЕДЕН И РАСПРОСТРАНЕН ИНОСТРАННЫМ")
     public static func defaultHiddenText(address: String) -> String {
-        address.lowercased().replacingOccurrences(of: "@", with: "") == "abbasgallyamovpolitics" ? telegramNotice : ""
+        address.lowercased().replacingOccurrences(of: "@", with: "") == "abbasgallyamovpolitics" ? telegramNotice + "\n" + telegramNoticeVariant : ""
     }
     public static func isTelegram(_ url: String) -> Bool { URL(string: url)?.host?.lowercased() == "t.me" }
     public static func articleBody(page: String, url: String) throws -> String? {
         let document = try SwiftSoup.parse(page, url)
         let host = URL(string: url)?.host?.lowercased() ?? ""
         try removeAds(document, host: host)
+        if ["f1news.ru", "www.f1news.ru"].contains(host), URL(string: url)?.path.hasPrefix("/gallery/") == true {
+            let images = try document.select(".b-gallery__media img, img.giThumbnail")
+            var seen = Set<String>()
+            var gallery = ""
+            for image in images {
+                var source = try image.absUrl("src")
+                if let parsed = URL(string: source), let range = parsed.path.range(of: "/gallery/") {
+                    // The gallery thumbnails point to cropped copies; the photo page
+                    // uses this full-size publisher CDN path.
+                    source = "https://bc.f1ne.ws" + String(parsed.path[range.lowerBound...])
+                }
+                guard !source.isEmpty, seen.insert(source).inserted else { continue }
+                try image.attr("src", source)
+                gallery += "<figure>" + (try image.outerHtml()) + "</figure>"
+            }
+            if !gallery.isEmpty {
+                if let next = try document.select(".pagination a[rel=next]").first() {
+                    try next.attr("href", next.absUrl("href"))
+                    try next.text("More gallery photos")
+                    gallery += "<p>" + (try next.outerHtml()) + "</p>"
+                }
+                return gallery
+            }
+        }
         let selector: String
         switch host {
         case "nplus1.ru", "www.nplus1.ru": selector = "[data-heading-wrap]"
@@ -56,6 +81,9 @@ public enum ContentRules {
             for phrase in ["Нашли опечатку? Выделите её и нажмите Ctrl+Enter!", "Нашли опечатку? Выделите её и нажмите кнопку поиска.", "Предыдущая новость", "Следующая новость"] {
                 try removeText(phrase, from: document)
             }
+        }
+        if hiddenText.contains(telegramNotice) {
+            try removeText(telegramNoticeVariant, from: document)
         }
         for phrase in hiddenText.components(separatedBy: .newlines) where !phrase.trimmingCharacters(in: .whitespaces).isEmpty {
             try removeText(phrase, from: document)

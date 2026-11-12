@@ -8,17 +8,20 @@ struct ReaderView: View {
     @Query(sort: [SortDescriptor(\Article.queuePosition), SortDescriptor(\Article.published), SortDescriptor(\Article.key)]) private var articles: [Article]
     @Query private var subscriptions: [Subscription]
     @Query(sort: \ReadingPosition.changed, order: .reverse) private var positions: [ReadingPosition]
+    @State private var preparation = ArticlePreparation()
     @State private var selected = ""
     @State private var prepared: ReaderDocument?
     @State private var showSubscriptions = false
     @State private var refreshing = false
     @State private var initialized = false
+    @State private var preparationGeneration = 0
     @State private var lastRefresh = Date.distantPast
     @State private var updateStatus: String?
     @State private var errorMessage: String?
     private var feed: [Article] {
         var seen = Set<String>()
-        return articles.filter { !$0.queued && seen.insert(ArticleIdentity.key(url: $0.url, fallback: $0.key)).inserted }
+        let unique = articles.filter { !$0.queued && seen.insert(ArticleIdentity.key(url: $0.url, fallback: $0.key)).inserted }
+        return ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
     }
     private var current: Article? { feed.first { $0.key == selected } }
     private var index: Int { feed.firstIndex { $0.key == selected } ?? 0 }
@@ -49,14 +52,16 @@ struct ReaderView: View {
                     Text("\(feed.filter { !$0.read }.count) unread").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 ToolbarItem {
-                    Menu {
-                        Button("Go to first unread", systemImage: "text.badge.checkmark") {
-                            if let unread = feed.first(where: { !$0.read }) { selected = unread.key }
-                        }.disabled(!feed.contains(where: { !$0.read }))
-                        Button("Subscriptions", systemImage: "slider.horizontal.3") { showSubscriptions = true }
-                        if refreshing { Text("Updating subscriptions…") }
-                        if let updateStatus { Text(updateStatus) }
-                    } label: { Label("Menu", systemImage: "ellipsis.circle") }
+                    Button {
+                        if let unread = feed.first(where: { !$0.read }) { selected = unread.key }
+                    } label: { Label("Go to first unread", systemImage: "forward.end.fill") }
+                    .disabled(!feed.contains(where: { !$0.read }))
+                }
+                ToolbarItem {
+                    Button { showSubscriptions = true } label: { Label("Subscriptions", systemImage: "slider.horizontal.3") }
+                }
+                if let updateStatus {
+                    ToolbarItem { Image(systemName: "exclamationmark.arrow.triangle.2.circlepath").help(updateStatus).accessibilityLabel(updateStatus) }
                 }
             }
             .sheet(isPresented: $showSubscriptions) { SubscriptionsView() }
@@ -69,6 +74,9 @@ struct ReaderView: View {
                     subscription.hiddenText = ContentRules.defaultHiddenText(address: subscription.address)
                     subscription.contentDefaultsApplied = true
                 }
+                for subscription in subscriptions where subscription.hiddenText == ContentRules.telegramNotice {
+                    subscription.hiddenText = ContentRules.telegramNotice + "\n" + ContentRules.telegramNoticeVariant
+                }
                 migrateLibrary(); restore(); initialized = true
                 await refresh(force: true)
             }
@@ -78,7 +86,14 @@ struct ReaderView: View {
                     if phase == .active { await refresh() }
                 }
             }
-            .task(id: selected) { await prepareCurrent() }
+            .task(id: selected) { showCurrent() }
+            .task(id: selected + "|" + feed.map(\.key).joined(separator: "|") + "|" + String(preparationGeneration) + "|" + String(phase == .active)) {
+                let candidates = (current.map { [$0] } ?? []) + feed.filter { !$0.read && $0.key != selected } + feed.filter { $0.read && $0.key != selected }
+                for article in candidates {
+                    guard !Task.isCancelled, phase == .active else { return }
+                    await preparation.prepare(article, context: context)
+                }
+            }
             .onChange(of: showSubscriptions) { _, visible in if !visible { Task { await refresh(force: true) } } }
             .onChange(of: selected) { _, key in
                 guard !key.isEmpty else { return }
@@ -114,10 +129,12 @@ struct ReaderView: View {
             }
             var known: [String: Article] = [:]
             var position = all.map(\.queuePosition).max() ?? 0
+            var readPosition = all.map(\.readPosition).max() ?? 0
             for article in all {
                 let identity = ArticleIdentity.key(url: article.url, fallback: article.key)
                 if let kept = known[identity] {
                     kept.read = kept.read || article.read
+                    if kept.read && kept.readPosition == 0 { readPosition += 1; kept.readPosition = readPosition }
                     if kept.html.isEmpty { kept.html = article.html }
                     if kept.feedHTML.isEmpty { kept.feedHTML = article.feedHTML }
                     for bookmark in positions where bookmark.articleKey == article.key { bookmark.articleKey = kept.key }
@@ -125,6 +142,7 @@ struct ReaderView: View {
                     context.delete(article)
                 } else {
                     known[identity] = article
+                    if article.read && article.readPosition == 0 { readPosition += 1; article.readPosition = readPosition }
                     if article.queuePosition == 0 { position += 1; article.queuePosition = position }
                 }
             }
@@ -168,23 +186,17 @@ struct ReaderView: View {
             } catch is CancellationError { return }
             catch { failures.append("\(subscription.name): \(error.localizedDescription)") }
         }
+        preparationGeneration += 1
         updateStatus = failures.isEmpty ? nil : "Updates will retry automatically. " + failures.joined(separator: "\n")
         restore()
     }
-    @MainActor private func prepareCurrent() async {
+    @MainActor private func showCurrent() {
         guard let article = current else { return }
-        let key = article.key
-        if article.contentRevision < ContentRules.revision && !ContentRules.isTelegram(article.url) {
-            do {
-                let html = try await service.articleText(url: article.url)
-                guard !Task.isCancelled, selected == key else { return }
-                if !html.isEmpty {
-                    article.html = html; article.text = (try? SwiftSoup.parse(html).text()) ?? article.text
-                    article.extracted = true; article.richExtracted = true; article.contentRevision = ContentRules.revision
-                }
-            } catch { /* Offline or blocked: show cached feed content once, without replacing it mid-read. */ }
+        prepared = ReaderDocument(article)
+        if !article.read {
+            article.readPosition = (articles.map(\.readPosition).max() ?? 0) + 1
+            article.read = true
         }
-        guard !Task.isCancelled, selected == key else { return }
-        prepared = ReaderDocument(article); article.read = true; save()
+        save()
     }
 }

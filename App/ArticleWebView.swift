@@ -20,7 +20,7 @@ struct ArticleWebView {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
         <style>
         :root { color-scheme: light dark; font: -apple-system-body; }
-        body { margin:0 auto; padding:24px; max-width:680px; overflow-wrap:anywhere; }
+        body { margin:0 auto; padding:0 24px 24px; max-width:680px; overflow-wrap:anywhere; }
         article { font-family: Georgia, serif; font-size:1.15em; line-height:1.7; }
         h1 { font-family: Georgia, serif; font-size:1.4em; line-height:1.3; }
         h2,h3,h4 { line-height:1.3; } img { max-width:100%; height:auto; border-radius:6px; }
@@ -42,6 +42,9 @@ struct ArticleWebView {
         webView.navigationDelegate = coordinator
         webView.move = move
         #if os(iOS)
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.contentInset = .zero
+        webView.scrollView.scrollIndicatorInsets = .zero
         for direction: UISwipeGestureRecognizer.Direction in [.left, .right] {
             let gesture = UISwipeGestureRecognizer(target: coordinator, action: #selector(Coordinator.swipe(_:)))
             gesture.direction = direction; gesture.delegate = coordinator; webView.addGestureRecognizer(gesture)
@@ -60,6 +63,11 @@ struct ArticleWebView {
         var move: (Int) -> Void
         var document = ""
         init(move: @escaping (Int) -> Void) { self.move = move }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            #if os(iOS)
+            webView.scrollView.setContentOffset(.zero, animated: false)
+            #endif
+        }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard action.navigationType == .linkActivated else { decisionHandler(.allow); return }
             if let url = action.request.url, ["https", "http"].contains(url.scheme ?? "") {

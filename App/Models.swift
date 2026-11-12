@@ -29,6 +29,7 @@ import SwiftData
     var queued: Bool = false
     var queuePosition: Int = 0
     var read: Bool = false
+    var readPosition: Int = 0
     var extracted: Bool = false
     var richExtracted: Bool = false
     var contentRevision: Int = 0
