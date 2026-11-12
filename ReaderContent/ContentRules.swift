@@ -34,8 +34,8 @@ public enum ContentRules {
         if host == "www.macrumors.com" || host == "macrumors.com" {
             // Fallback for already-cached extraction and feed content.
             for heading in try document.select("h1,h2,h3,h4") where try heading.text().trimmingCharacters(in: .whitespacesAndNewlines) == "Popular Stories" {
-                var next = heading.nextElementSibling()
-                while let node = next { next = node.nextElementSibling(); try node.remove() }
+                var next = try heading.nextElementSibling()
+                while let node = next { next = try node.nextElementSibling(); try node.remove() }
                 try heading.remove()
             }
         }
