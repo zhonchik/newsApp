@@ -13,12 +13,22 @@ public enum ContentRules {
         let host = URL(string: url)?.host?.lowercased() ?? ""
         let selector: String
         switch host {
-        case "nplus1.ru", "www.nplus1.ru": selector = ".n1_material"
+        case "nplus1.ru", "www.nplus1.ru": selector = "[data-heading-wrap]"
         case "f1news.ru", "www.f1news.ru": selector = "article.post .post_content"
         case "macrumors.com", "www.macrumors.com": selector = "article .js-content"
         default: return nil
         }
-        guard let body = try document.select(selector).first(), !(try body.text()).isEmpty else { return nil }
+        guard let selected = try document.select(selector).first(), !(try selected.text()).isEmpty else { return nil }
+        let body: Element
+        if host == "nplus1.ru" || host == "www.nplus1.ru" {
+            // One story contains multiple material blocks. The read-next section
+            // sits outside data-heading-wrap; retain every block of the current story.
+            let blocks = try selected.select(".n1_material, figure")
+            guard !blocks.isEmpty() else { return nil }
+            let joined = try blocks.map { try $0.outerHtml() }.joined(separator: "\n")
+            guard let content = try SwiftSoup.parse(joined, url).body() else { return nil }
+            body = content
+        } else { body = selected }
         try body.select("script, style, nav, aside, .banner, .inpage_container, .post_error, .post_error_mobile, .post_more").remove()
         // Normalize lazy and relative image sources before dropping the page's base URL.
         for image in try body.select("img") {

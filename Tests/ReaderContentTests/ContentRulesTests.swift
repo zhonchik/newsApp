@@ -3,9 +3,10 @@ import XCTest
 
 final class ContentRulesTests: XCTestCase {
     func testNPlusOneSelectsOnlyFirstArticle() throws {
-        let page = "<header>Menu</header><div class='n1_material'><p>Requested article</p><img src='/photo.jpg'></div><div class='n1_material'><p>Another article</p></div>"
+        let page = "<header>Menu</header><section data-heading-wrap><div class='n1_material'><p>Requested article</p><img src='/photo.jpg'></div><div class='n1_material'><p>Final paragraph</p></div></section><section><div class='n1_material'><p>Another article</p></div></section>"
         let result = try XCTUnwrap(ContentRules.articleBody(page: page, url: "https://nplus1.ru/news/story"))
         XCTAssertTrue(result.contains("Requested article"))
+        XCTAssertTrue(result.contains("Final paragraph"))
         XCTAssertTrue(result.contains("https://nplus1.ru/photo.jpg"))
         XCTAssertFalse(result.contains("Another article"))
         XCTAssertFalse(result.contains("Menu"))
