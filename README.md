@@ -62,6 +62,8 @@ The existing repository license is preserved. Mozilla Readability and SwiftSoup 
 
 ## Reader controls
 
-Use Menu → Go to first unread to return to the oldest unread position in the queue. Subscription deletion requires tapping the trash button and confirming; saved articles remain. Menu → Subscriptions → Hide repeated text configures phrases hidden from a subscription's reader view.
+Use the fast-forward toolbar button (Go to first unread) to return to the oldest unread position in the queue. Subscription deletion requires tapping the trash button and confirming; saved articles remain. Subscriptions → Hide repeated text configures phrases hidden from a subscription's reader view.
 
-Article extraction completes before displaying a newly selected story. If extraction fails, the cached version is shown once and is not replaced mid-read. A short preparation indicator may appear on first opening. Images without dimensions reserve space to reduce layout movement. N+1 ad containers are removed while ordinary article text mentioning advertising remains.
+Articles are prepared sequentially in the background while the app is active, prioritizing the selected story and unread queue. Selecting a story immediately displays cached content without a network wait. If preparation has not finished yet, the feed content remains on screen; the prepared full text is available on reopening. Background preparation does not replace a page mid-read. Read articles always precede unread articles, with read history ordered by when articles were opened and unread stories ordered by arrival. Images without dimensions reserve space to reduce layout movement. N+1 ad containers are removed while ordinary article text mentioning advertising remains.
+
+F1News gallery pages use a dedicated image-grid extractor, with full-size publisher images and a link to additional gallery pages. The repeated-text filter for @abbasgallyamovpolitics matches both the original notice and the “И РАСПРОСТРАНЕН” variant; existing default filters are upgraded automatically, while cleared/custom filters remain user-controlled.

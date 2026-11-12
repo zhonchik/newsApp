@@ -24,19 +24,22 @@ struct ReaderView: View {
         return ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
     }
     private var current: Article? { feed.first { $0.key == selected } }
+    private var visibleDocument: ReaderDocument? {
+        if let prepared, prepared.key == selected { return prepared }
+        return current.map { ReaderDocument($0) }
+    }
     private var index: Int { feed.firstIndex { $0.key == selected } ?? 0 }
     private var hiddenText: String { subscriptions.first { $0.id == current?.subscriptionID }?.hiddenText ?? "" }
     private let service = FeedService()
     var body: some View {
         NavigationStack {
             Group {
-                if let document = prepared, document.key == selected {
+                if let document = visibleDocument {
                     ArticleWebView(article: document, hiddenText: hiddenText, move: move)
                         .id(document.key)
                         .accessibilityAction(named: "Next article") { move(1) }
                         .accessibilityAction(named: "Previous article") { move(-1) }
-                } else if current != nil {
-                    ProgressView("Preparing article…").frame(maxWidth: .infinity, maxHeight: .infinity)
+
                 } else {
                     ContentUnavailableView {
                         Label("A little more perspective.", systemImage: "text.page")
