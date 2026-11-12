@@ -20,6 +20,7 @@ public enum ReaderContent {
         })
         do {
             let fallback = try SwiftSoup.parse(feed, baseURL)
+            try ContentRules.clean(fallback, url: baseURL, hiddenText: hiddenText)
             var seen = Set<String>()
             var photos = ""
             for image in try fallback.select("img[src]") {
