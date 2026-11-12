@@ -7,12 +7,16 @@ public enum ReaderContent {
     public static func html(body: String, feed: String, baseURL: String, hiddenText: String = "") throws -> String {
         let document = try SwiftSoup.parse(body, baseURL)
         try ContentRules.clean(document, url: baseURL, hiddenText: hiddenText)
+        var bodyImages = Set<String>()
         for image in try document.select("img[src]") {
             let absolute = try image.absUrl("src")
-            if !absolute.isEmpty { try image.attr("src", absolute) }
+            if !absolute.isEmpty {
+                guard bodyImages.insert(ArticleIdentity.imageKey(absolute)).inserted else { try image.remove(); continue }
+                try image.attr("src", absolute)
+            }
         }
         let extractedPaths = Set(try document.select("img[src]").compactMap { image in
-            URL(string: try image.absUrl("src"))?.path
+            ArticleIdentity.imageKey(try image.absUrl("src"))
         })
         do {
             let fallback = try SwiftSoup.parse(feed, baseURL)
@@ -20,7 +24,7 @@ public enum ReaderContent {
             var photos = ""
             for image in try fallback.select("img[src]") {
                 let absolute = try image.absUrl("src")
-                guard let url = URL(string: absolute), url.scheme == "https", !extractedPaths.contains(url.path), seen.insert(absolute).inserted else { continue }
+                guard let url = URL(string: absolute), url.scheme == "https", !extractedPaths.contains(ArticleIdentity.imageKey(absolute)), seen.insert(ArticleIdentity.imageKey(absolute)).inserted else { continue }
                 try image.attr("src", absolute)
                 photos += try image.outerHtml()
             }

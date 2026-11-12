@@ -3,10 +3,21 @@ import SwiftSoup
 import WebKit
 
 struct FeedService {
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 30
+        return URLSession(configuration: configuration)
+    }()
+    func itemsWithRetry(for subscription: Subscription) async throws -> [RemoteArticle] {
+        try await NetworkRetry.perform { try await items(for: subscription) }
+    }
+
     func fetch(_ raw: String) async throws -> Data {
         guard let url = URL(string: raw), url.scheme == "https" else { throw URLError(.badURL) }
         var request = URLRequest(url: url); request.timeoutInterval = 15
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await Self.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw URLError(.badServerResponse) }
         var data = Data()
         for try await byte in bytes {

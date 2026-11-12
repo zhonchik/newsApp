@@ -2,7 +2,7 @@ import Foundation
 import SwiftSoup
 
 public enum ContentRules {
-    public static let revision = 2
+    public static let revision = 3
     public static let telegramNotice = "НАСТОЯЩИЙ МАТЕРИАЛ ПРОИЗВЕДЕН ИНОСТРАННЫМ АГЕНТОМ ГАЛЛЯМОВЫМ АББАСОМ РАДИКОВИЧЕМ. 18+"
     public static func defaultHiddenText(address: String) -> String {
         address.lowercased().replacingOccurrences(of: "@", with: "") == "abbasgallyamovpolitics" ? telegramNotice : ""
@@ -11,6 +11,7 @@ public enum ContentRules {
     public static func articleBody(page: String, url: String) throws -> String? {
         let document = try SwiftSoup.parse(page, url)
         let host = URL(string: url)?.host?.lowercased() ?? ""
+        try removeAds(document, host: host)
         let selector: String
         switch host {
         case "nplus1.ru", "www.nplus1.ru": selector = "[data-heading-wrap]"
@@ -41,6 +42,7 @@ public enum ContentRules {
     }
     public static func clean(_ document: Document, url: String, hiddenText: String) throws {
         let host = URL(string: url)?.host?.lowercased() ?? ""
+        try removeAds(document, host: host)
         if host == "www.macrumors.com" || host == "macrumors.com" {
             // Fallback for already-cached extraction and feed content.
             for heading in try document.select("h1,h2,h3,h4") where try heading.text().trimmingCharacters(in: .whitespacesAndNewlines) == "Popular Stories" {
@@ -58,6 +60,10 @@ public enum ContentRules {
         for phrase in hiddenText.components(separatedBy: .newlines) where !phrase.trimmingCharacters(in: .whitespaces).isEmpty {
             try removeText(phrase, from: document)
         }
+    }
+    private static func removeAds(_ document: Document, host: String) throws {
+        guard host == "nplus1.ru" || host == "www.nplus1.ru" else { return }
+        try document.select(".ad, .ads, .advertisement, .banner, [data-ad], [data-ad-client], [data-erid], [id^=adfox], [class*=header-bidding], [class*=adv-banner], [id*=adv-banner], iframe").remove()
     }
     // Remove only matching text across inline tags, retaining all surrounding markup.
     private static func removeText(_ phrase: String, from document: Document) throws {

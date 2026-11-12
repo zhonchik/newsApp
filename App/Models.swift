@@ -27,12 +27,13 @@ import SwiftData
     var feedHTML: String = ""
     var published: Date = Date()
     var queued: Bool = false
+    var queuePosition: Int = 0
     var read: Bool = false
     var extracted: Bool = false
     var richExtracted: Bool = false
     var contentRevision: Int = 0
     init(item: RemoteArticle, subscription: Subscription) {
-        key = subscription.id.uuidString + ":" + item.id
+        key = ArticleIdentity.key(url: item.url, fallback: subscription.address + ":" + item.id)
         subscriptionID = subscription.id; title = item.title; source = subscription.name
         url = item.url; text = item.text; html = item.html; feedHTML = item.html; published = item.published; queued = subscription.paused
     }
@@ -52,4 +53,20 @@ struct RemoteArticle: Decodable {
     let text: String
     let published: Date
     var html: String = ""
+}
+
+/// Immutable presentation prevents background imports from reloading an open page.
+struct ReaderDocument {
+    let key: String
+    let title: String
+    let source: String
+    let url: String
+    let text: String
+    let html: String
+    let feedHTML: String
+    let published: Date
+    init(_ article: Article) {
+        key = article.key; title = article.title; source = article.source; url = article.url
+        text = article.text; html = article.html; feedHTML = article.feedHTML; published = article.published
+    }
 }

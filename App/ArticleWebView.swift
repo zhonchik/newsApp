@@ -4,7 +4,7 @@ import SwiftSoup
 
 /// A single scrolling reader document. Publisher scripts and embeds cannot execute.
 struct ArticleWebView {
-    let article: Article
+    let article: ReaderDocument
     let hiddenText: String
     let move: (Int) -> Void
 
@@ -22,8 +22,9 @@ struct ArticleWebView {
         :root { color-scheme: light dark; font: -apple-system-body; }
         body { margin:0 auto; padding:24px; max-width:680px; overflow-wrap:anywhere; }
         article { font-family: Georgia, serif; font-size:1.15em; line-height:1.7; }
-        h1 { font-family: Georgia, serif; font-size:2em; line-height:1.2; }
+        h1 { font-family: Georgia, serif; font-size:1.4em; line-height:1.3; }
         h2,h3,h4 { line-height:1.3; } img { max-width:100%; height:auto; border-radius:6px; }
+        img:not([width][height]) { width:100%; aspect-ratio:16/9; object-fit:contain; }
         figure { margin:1.5em 0; } figcaption,header,footer { font: -apple-system-caption1; color: GrayText; }
         a { color: #298c81; } blockquote { border-left:3px solid #298c81; margin:1em 0; padding-left:1em; }
         pre { overflow-x:auto; padding:12px; background:light-dark(#f3f3f3,#252525); } table { display:block; overflow-x:auto; border-collapse:collapse; }
