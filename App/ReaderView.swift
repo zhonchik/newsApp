@@ -33,40 +33,8 @@ struct ReaderView: View {
     private let service = FeedService()
     var body: some View {
         NavigationStack {
-            Group {
-                if let document = visibleDocument {
-                    ArticleWebView(article: document, hiddenText: hiddenText, move: move)
-                        .id(document.key)
-                        .accessibilityAction(named: "Next article") { move(1) }
-                        .accessibilityAction(named: "Previous article") { move(-1) }
-
-                } else {
-                    ContentUnavailableView {
-                        Label("A little more perspective.", systemImage: "text.page")
-                    } description: {
-                        Text(subscriptions.isEmpty ? "Add an RSS feed or public Telegram channel to start your reading queue." : "Stories update automatically. Paused subscriptions keep new stories queued until you resume.")
-                    } actions: {
-                        Button("Manage subscriptions") { showSubscriptions = true }.buttonStyle(.borderedProminent)
-                    }
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("\(feed.filter { !$0.read }.count) unread").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                ToolbarItem {
-                    Button {
-                        if let unread = feed.first(where: { !$0.read }) { selected = unread.key }
-                    } label: { Label("Go to first unread", systemImage: "forward.end.fill") }
-                    .disabled(!feed.contains(where: { !$0.read }))
-                }
-                ToolbarItem {
-                    Button { showSubscriptions = true } label: { Label("Subscriptions", systemImage: "slider.horizontal.3") }
-                }
-                if let updateStatus {
-                    ToolbarItem { Image(systemName: "exclamationmark.arrow.triangle.2.circlepath").help(updateStatus).accessibilityLabel(updateStatus) }
-                }
-            }
+            readerContent
+            .toolbar { readerToolbar }
             .sheet(isPresented: $showSubscriptions) { SubscriptionsView() }
             .alert("Couldn't save library", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK") { errorMessage = nil }
@@ -90,13 +58,7 @@ struct ReaderView: View {
                 }
             }
             .task(id: selected) { showCurrent() }
-            .task(id: selected + "|" + feed.map(\.key).joined(separator: "|") + "|" + String(preparationGeneration) + "|" + String(phase == .active)) {
-                let candidates = (current.map { [$0] } ?? []) + feed.filter { !$0.read && $0.key != selected } + feed.filter { $0.read && $0.key != selected }
-                for article in candidates {
-                    guard !Task.isCancelled, phase == .active else { return }
-                    await preparation.prepare(article, context: context)
-                }
-            }
+            .task(id: preparationKey) { await prepareInBackground() }
             .onChange(of: showSubscriptions) { _, visible in if !visible { Task { await refresh(force: true) } } }
             .onChange(of: selected) { _, key in
                 guard !key.isEmpty else { return }
@@ -108,6 +70,54 @@ struct ReaderView: View {
             .onChange(of: phase) { _, value in if value == .active && initialized { Task { await refresh() } } }
             .onChange(of: feed.map(\.key)) { _, _ in restore() }
         }.tint(Color(red: 0.14, green: 0.54, blue: 0.51))
+    }
+    @ViewBuilder private var readerContent: some View {
+                if let document = visibleDocument {
+                    ArticleWebView(article: document, hiddenText: hiddenText, move: move)
+                        .id(document.key)
+                        .accessibilityAction(named: "Next article") { move(1) }
+                        .accessibilityAction(named: "Previous article") { move(-1) }
+
+                } else {
+                    ContentUnavailableView {
+                        Label("A little more perspective.", systemImage: "text.page")
+                    } description: {
+                        Text(subscriptions.isEmpty ? "Add an RSS feed or public Telegram channel to start your reading queue." : "Stories update automatically. Paused subscriptions keep new stories queued until you resume.")
+                    } actions: {
+                        Button("Manage subscriptions") { showSubscriptions = true }.buttonStyle(.borderedProminent)
+                    }
+                }
+    }
+    @ToolbarContentBuilder private var readerToolbar: some ToolbarContent {
+                ToolbarItem(placement: .principal) {
+                    Text("\(feed.filter { !$0.read }.count) unread").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                ToolbarItem {
+                    Button {
+                        if let unread = feed.first(where: { !$0.read }) { selected = unread.key }
+                    } label: { Label("Go to first unread", systemImage: "forward.end.fill") }
+                    .disabled(!feed.contains(where: { !$0.read }))
+                }
+                ToolbarItem {
+                    Button { showSubscriptions = true } label: { Label("Subscriptions", systemImage: "slider.horizontal.3") }
+                }
+                if let updateStatus {
+                    ToolbarItem { Image(systemName: "exclamationmark.arrow.triangle.2.circlepath").help(updateStatus).accessibilityLabel(updateStatus) }
+                }
+    }
+    private var preparationKey: String {
+        let keys = feed.map { $0.key }.joined(separator: "|")
+        return "\(selected)|\(keys)|\(preparationGeneration)|\(phase == .active)"
+    }
+    @MainActor private func prepareInBackground() async {
+        var candidates: [Article] = []
+        if let article = current { candidates.append(article) }
+        candidates.append(contentsOf: feed.filter { !$0.read && $0.key != selected })
+        candidates.append(contentsOf: feed.filter { $0.read && $0.key != selected })
+        for article in candidates {
+            guard !Task.isCancelled, phase == .active else { return }
+            await preparation.prepare(article, context: context)
+        }
     }
     private func restore() {
         if feed.contains(where: { $0.key == selected }) { return }
