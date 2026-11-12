@@ -7,9 +7,12 @@ import SwiftData
     var address: String = ""
     var kind: String = "rss"
     var paused: Bool = false
+    var hiddenText: String = ""
+    var contentDefaultsApplied: Bool = false
     var created: Date = Date()
     init(name: String, address: String, kind: String) {
         self.name = name; self.address = address; self.kind = kind
+        hiddenText = ContentRules.defaultHiddenText(address: address); contentDefaultsApplied = true
     }
 }
 
@@ -27,6 +30,7 @@ import SwiftData
     var read: Bool = false
     var extracted: Bool = false
     var richExtracted: Bool = false
+    var contentRevision: Int = 0
     init(item: RemoteArticle, subscription: Subscription) {
         key = subscription.id.uuidString + ":" + item.id
         subscriptionID = subscription.id; title = item.title; source = subscription.name

@@ -4,8 +4,9 @@ import SwiftSoup
 public enum ReaderContent {
     /// Preserve publisher feed photos when full-text extraction omits them.
     /// Resolve relative URLs before sanitizing so WebKit and the cleaner agree.
-    public static func html(body: String, feed: String, baseURL: String) throws -> String {
+    public static func html(body: String, feed: String, baseURL: String, hiddenText: String = "") throws -> String {
         let document = try SwiftSoup.parse(body, baseURL)
+        try ContentRules.clean(document, url: baseURL, hiddenText: hiddenText)
         for image in try document.select("img[src]") {
             let absolute = try image.absUrl("src")
             if !absolute.isEmpty { try image.attr("src", absolute) }

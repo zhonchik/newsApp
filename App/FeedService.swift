@@ -33,8 +33,10 @@ struct FeedService {
     }
     @MainActor func articleText(url: String) async throws -> String {
         let data = try await fetch(url)
+        let page = String(decoding: data, as: UTF8.self)
+        if let body = try ContentRules.articleBody(page: page, url: url) { return body }
         let extractor = ArticleExtractor()
-        return try await extractor.extract(String(decoding: data, as: UTF8.self), url: url)
+        return try await extractor.extract(page, url: url)
     }
     private static func telegramImages(_ post: Element) throws -> String {
         var html = ""

@@ -20,7 +20,7 @@ struct ReaderView: View {
         NavigationStack {
             Group {
                 if let article = current {
-                    ArticleWebView(article: article, move: move)
+                    ArticleWebView(article: article, hiddenText: subscriptions.first(where: { $0.id == article.subscriptionID })?.hiddenText ?? "", move: move)
                         .accessibilityAction(named: "Next article") { move(1) }
                         .accessibilityAction(named: "Previous article") { move(-1) }
                 } else {
@@ -39,7 +39,14 @@ struct ReaderView: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         .accessibilityLabel("\(feed.filter { !$0.read }.count) unread articles")
                 }
-                ToolbarItem { Button { showSubscriptions = true } label: { Label("Subscriptions", systemImage: "slider.horizontal.3") } }
+                ToolbarItem {
+                    Menu {
+                        Button("Go to first unread", systemImage: "text.badge.checkmark") {
+                            if let unread = feed.first(where: { !$0.read }) { selected = unread.key }
+                        }.disabled(!feed.contains(where: { !$0.read }))
+                        Button("Subscriptions", systemImage: "slider.horizontal.3") { showSubscriptions = true }
+                    } label: { Label("Menu", systemImage: "ellipsis.circle") }
+                }
                 ToolbarItem { Button { Task { await refresh() } } label: {
                     if refreshing { ProgressView() } else { Label("Refresh", systemImage: "arrow.clockwise") }
                 }.disabled(refreshing) }
@@ -48,7 +55,13 @@ struct ReaderView: View {
             .alert("Couldn't update Current", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK") { errorMessage = nil }
             } message: { Text(errorMessage ?? "") }
-            .task { restore(); await refresh() }
+            .task {
+                for subscription in subscriptions where !subscription.contentDefaultsApplied {
+                    subscription.hiddenText = ContentRules.defaultHiddenText(address: subscription.address)
+                    subscription.contentDefaultsApplied = true
+                }
+                save(); restore(); await refresh()
+            }
             .task(id: selected) { await extractCurrent() }
             .onChange(of: showSubscriptions) { _, visible in if !visible { Task { await refresh() } } }
             .onChange(of: selected) { _, key in
@@ -98,11 +111,11 @@ struct ReaderView: View {
         restore()
     }
     @MainActor private func extractCurrent() async {
-        guard let article = current, !article.richExtracted, URL(string: article.url)?.host != "t.me" else { return }
+        guard let article = current, article.contentRevision < ContentRules.revision, URL(string: article.url)?.host != "t.me" else { return }
         do {
             let html = try await service.articleText(url: article.url)
             guard !Task.isCancelled, !html.isEmpty else { return }
-            article.html = html; article.text = (try? SwiftSoup.parse(html).text()) ?? article.text; article.extracted = true; article.richExtracted = true; save()
+            article.html = html; article.text = (try? SwiftSoup.parse(html).text()) ?? article.text; article.extracted = true; article.richExtracted = true; article.contentRevision = ContentRules.revision; save()
         } catch { /* Retain feed content offline and retry next time. */ }
     }
 }

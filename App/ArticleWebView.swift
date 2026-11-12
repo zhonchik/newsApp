@@ -5,6 +5,7 @@ import SwiftSoup
 /// A single scrolling reader document. Publisher scripts and embeds cannot execute.
 struct ArticleWebView {
     let article: Article
+    let hiddenText: String
     let move: (Int) -> Void
 
     private func document() -> String {
@@ -12,7 +13,8 @@ struct ArticleWebView {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
         let fallback = "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
-        let body = (try? ReaderContent.html(body: article.html.isEmpty ? fallback : article.html, feed: article.feedHTML, baseURL: article.url)) ?? fallback
+        let body = (try? ReaderContent.html(body: article.html.isEmpty ? fallback : article.html, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)) ?? fallback
+        let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
         return """
         <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
@@ -27,7 +29,7 @@ struct ArticleWebView {
         pre { overflow-x:auto; padding:12px; background:light-dark(#f3f3f3,#252525); } table { display:block; overflow-x:auto; border-collapse:collapse; }
         td,th { border:1px solid GrayText; padding:8px; } footer { margin-top:32px; }
         </style></head><body><header>\(escape(article.source)) · \(escape(article.published.formatted(date: .abbreviated, time: .omitted)))</header>
-        <h1>\(escape(article.title))</h1><article>\(body)</article>
+        \(headline)<article>\(body)</article>
         <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
         """
     }

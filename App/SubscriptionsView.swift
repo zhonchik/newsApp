@@ -30,6 +30,11 @@ struct SubscriptionsView: View {
                                 Button(role: .destructive) { context.delete(subscription); save() } label: { Image(systemName: "trash") }.accessibilityLabel("Remove \(subscription.name)")
                             }
                             Text(subscription.address).font(.caption).foregroundStyle(.secondary)
+                            DisclosureGroup("Hide repeated text") {
+                                TextField("One phrase per line", text: Binding(get: { subscription.hiddenText }, set: { subscription.hiddenText = $0; subscription.contentDefaultsApplied = true; save() }), axis: .vertical)
+                                    .lineLimit(3...8)
+                                Text("Matching phrases are hidden in the reader. Original articles remain available.").font(.caption).foregroundStyle(.secondary)
+                            }
                             let count = articles.filter { $0.subscriptionID == subscription.id && $0.queued }.count
                             if subscription.paused { Text("Paused · \(count) queued").font(.caption).foregroundStyle(.orange) }
                         }.padding(.vertical, 4)
