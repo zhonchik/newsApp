@@ -42,8 +42,8 @@ struct ArticleWebView {
         <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
         """
     }
-    func makeCoordinator() -> Coordinator { Coordinator(move: move) }
-    func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
+    @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move) }
+    @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         let webView = ReaderWebView(frame: .zero, configuration: config)
@@ -60,7 +60,7 @@ struct ArticleWebView {
         #endif
         return webView
     }
-    func update(_ webView: ReaderWebView, coordinator: Coordinator) {
+    @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
         coordinator.move = move; webView.move = move
         let palette = ReaderPalette(lightText: lightText, lightBackground: lightBackground, darkText: darkText, darkBackground: darkBackground)
         let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette)
