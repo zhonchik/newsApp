@@ -20,6 +20,7 @@ struct SubscriptionsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                ThemeSettings()
                 Section("Your subscriptions") {
                     if subscriptions.isEmpty { Text("Your stream starts here.").foregroundStyle(.secondary) }
                     ForEach(subscriptions) { subscription in
@@ -56,7 +57,7 @@ struct SubscriptionsView: View {
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle("Subscriptions")
+            .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .confirmationDialog("Delete subscription?", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
                 Button("Delete subscription", role: .destructive) {

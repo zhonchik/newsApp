@@ -2,7 +2,7 @@ import Foundation
 import SwiftSoup
 import WebKit
 
-struct FeedService {
+actor FeedService {
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.waitsForConnectivity = true
@@ -10,8 +10,8 @@ struct FeedService {
         configuration.timeoutIntervalForResource = 30
         return URLSession(configuration: configuration)
     }()
-    func itemsWithRetry(for subscription: Subscription) async throws -> [RemoteArticle] {
-        try await NetworkRetry.perform { try await items(for: subscription) }
+    func itemsWithRetry(address: String, kind: String) async throws -> [RemoteArticle] {
+        try await NetworkRetry.perform { try await items(address: address, kind: kind) }
     }
 
     func fetch(_ raw: String) async throws -> Data {
@@ -26,28 +26,35 @@ struct FeedService {
         }
         return data
     }
-    func items(for subscription: Subscription) async throws -> [RemoteArticle] {
-        if subscription.kind == "telegram" {
-            let channel = subscription.address.replacingOccurrences(of: "@", with: "")
+    func items(address: String, kind: String) async throws -> [RemoteArticle] {
+        if kind == "telegram" {
+            let channel = address.replacingOccurrences(of: "@", with: "")
             guard channel.range(of: "^[A-Za-z0-9_]{5,32}$", options: .regularExpression) != nil else { throw URLError(.badURL) }
             let data = try await fetch("https://t.me/s/" + channel)
             let doc = try SwiftSoup.parse(String(decoding: data, as: UTF8.self))
             return try doc.select(".tgme_widget_message").compactMap { post in
                 let id = try post.attr("data-post")
-                let text = try post.select(".tgme_widget_message_text").text()
-                guard !text.isEmpty, !id.isEmpty, let date = Self.date(try post.select("time").attr("datetime")) else { return nil }
-                return RemoteArticle(id: id, title: String(text.prefix(100)), url: "https://t.me/" + id, text: text, published: date, html: try post.select(".tgme_widget_message_text").html() + Self.telegramImages(post))
+                let message = try TelegramContent.message(in: post)
+                let text = message.text
+                let video = try VideoPreview.telegram(post, url: "https://t.me/" + id)
+                guard !text.isEmpty || !video.isEmpty else { return nil }
+                guard !id.isEmpty, let date = Self.date(try post.select("time").attr("datetime")) else { return nil }
+                return RemoteArticle(id: id, title: text.isEmpty ? "Telegram video" : String(text.prefix(100)), url: "https://t.me/" + id, text: text, published: date, html: message.html + (try Self.telegramImages(post)) + video)
             }
         }
-        let data = try await fetch(subscription.address)
+        let data = try await fetch(address)
         return try FeedParser.parse(data)
     }
-    @MainActor func articleText(url: String) async throws -> String {
+    func articleText(url: String) async throws -> String {
         let data = try await fetch(url)
         let page = String(decoding: data, as: UTF8.self)
         if let body = try ContentRules.articleBody(page: page, url: url) { return body }
-        let extractor = ArticleExtractor()
-        return try await extractor.extract(page, url: url)
+        guard let resource = Bundle.main.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
+        let library = try String(contentsOf: resource, encoding: .utf8)
+        let encoded = String(data: try JSONSerialization.data(withJSONObject: [page]), encoding: .utf8)!
+        let script = library + "\nconst doc = new DOMParser().parseFromString(\(encoded)[0], 'text/html'); const base = doc.createElement('base'); base.href = document.baseURI; doc.head.appendChild(base); new Readability(doc).parse()?.content || '';"
+        let extractor = await ArticleExtractor()
+        return try await extractor.extract(script: script, url: url)
     }
     private static func telegramImages(_ post: Element) throws -> String {
         var html = ""
@@ -118,11 +125,8 @@ final class FeedParser: NSObject, XMLParserDelegate {
     private var webView: WKWebView!
     private var continuation: CheckedContinuation<String, Error>?
     private var script = ""
-    func extract(_ html: String, url: String) async throws -> String {
-        guard let resource = Bundle.main.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
-        let library = try String(contentsOf: resource, encoding: .utf8)
-        let encoded = String(data: try JSONSerialization.data(withJSONObject: [html]), encoding: .utf8)!
-        script = library + "\nconst doc = new DOMParser().parseFromString(\(encoded)[0], 'text/html'); const base = doc.createElement('base'); base.href = document.baseURI; doc.head.appendChild(base); new Readability(doc).parse()?.content || '';"
+    func extract(script: String, url: String) async throws -> String {
+        self.script = script
         let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: .zero, configuration: configuration); webView.navigationDelegate = self
         return try await withCheckedThrowingContinuation { continuation in

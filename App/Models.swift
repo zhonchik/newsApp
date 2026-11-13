@@ -47,7 +47,7 @@ import SwiftData
     init(articleKey: String) { self.articleKey = articleKey }
 }
 
-struct RemoteArticle: Decodable {
+struct RemoteArticle: Decodable, Sendable {
     let id: String
     let title: String
     let url: String
@@ -57,7 +57,7 @@ struct RemoteArticle: Decodable {
 }
 
 /// Immutable presentation prevents background imports from reloading an open page.
-struct ReaderDocument {
+struct ReaderDocument: Sendable, Equatable {
     let key: String
     let title: String
     let source: String

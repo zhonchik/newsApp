@@ -19,8 +19,10 @@ import SwiftSoup
         let html = await task.value
         running[key] = nil
         guard article.modelContext != nil, let html, !html.isEmpty else { return }
+        let text = await Task.detached(priority: .utility) { (try? SwiftSoup.parse(html).text()) ?? "" }.value
+        guard article.modelContext != nil else { return }
         article.html = html
-        article.text = (try? SwiftSoup.parse(html).text()) ?? article.text
+        article.text = text
         article.extracted = true; article.richExtracted = true
         article.contentRevision = ContentRules.revision
         try? context.save()
