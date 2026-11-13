@@ -23,13 +23,15 @@ struct ReaderView: View {
     @State private var identities: [String: String] = [:]
     private func rebuildFeed() {
         var seen = Set<String>()
+        var cachedIdentities = identities
         let unique = articles.filter { article in
             guard !article.queued else { return false }
             let lookup = article.url + "|" + article.key
-            let identity = identities[lookup] ?? ArticleIdentity.key(url: article.url, fallback: article.key)
-            identities[lookup] = identity
+            let identity = cachedIdentities[lookup] ?? ArticleIdentity.key(url: article.url, fallback: article.key)
+            cachedIdentities[lookup] = identity
             return seen.insert(identity).inserted
         }
+        identities = cachedIdentities
         feed = ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
     }
     private var current: Article? { feed.first { $0.key == selected } }
