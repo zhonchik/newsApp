@@ -6,7 +6,7 @@ import SwiftSoup
 @MainActor final class ArticlePreparation {
     private var running: [String: Task<String?, Never>] = [:]
     private var attempted: [String: Date] = [:]
-    func prepare(_ article: Article, context: ModelContext) async {
+    func prepare(_ article: Article, worker: LibraryWorker) async {
         guard !ContentRules.isTelegram(article.url), article.contentRevision < ContentRules.revision else { return }
         let key = article.key
         if running[key] == nil {
@@ -21,10 +21,6 @@ import SwiftSoup
         guard article.modelContext != nil, let html, !html.isEmpty else { return }
         let text = await Task.detached(priority: .utility) { (try? SwiftSoup.parse(html).text()) ?? "" }.value
         guard article.modelContext != nil else { return }
-        article.html = html
-        article.text = text
-        article.extracted = true; article.richExtracted = true
-        article.contentRevision = ContentRules.revision
-        try? context.save()
+        try? await worker.savePrepared(key: key, html: html, text: text)
     }
 }

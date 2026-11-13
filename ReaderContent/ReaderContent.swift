@@ -32,7 +32,20 @@ public enum ReaderContent {
             }
             try document.body()?.prepend(photos)
         }
-        try document.body()?.append(previews)
-        return try SwiftSoup.clean(document.body()?.html() ?? body, baseURL, Whitelist.relaxed()) ?? ""
+        // Publisher iframes/scripts are removed. Only our validated YouTube embeds
+        // are appended after cleaning, and only HTTPS video sources survive.
+        let whitelist = Whitelist.relaxed()
+        try whitelist.addTags("video", "source")
+        try whitelist.addAttributes("video", "src", "poster", "controls", "playsinline", "preload", "width", "height")
+        try whitelist.addAttributes("source", "src", "type")
+        try whitelist.addProtocols("video", "src", "https")
+        try whitelist.addProtocols("video", "poster", "https")
+        try whitelist.addProtocols("source", "src", "https")
+        let clean = try SwiftSoup.clean(document.body()?.html() ?? body, baseURL, whitelist) ?? ""
+        let safe = try SwiftSoup.parse(clean)
+        for video in try safe.select("video") {
+            try video.attr("controls", "").attr("playsinline", "").attr("preload", "metadata")
+        }
+        return (try safe.body()?.html() ?? "") + previews
     }
 }

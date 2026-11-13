@@ -74,6 +74,16 @@ HTML parsing, feed decoding, extraction-script preparation and reader sanitizati
 
 Telegram import selects one message body instead of concatenating duplicate preview elements. Refresh repairs cached posts that are still in the channel’s public preview window; older saved posts outside that window are not rewritten.
 
-YouTube links and embeds become thumbnail cards. Public Telegram videos use available poster images or a text fallback. Tap a card to watch on the provider; playback is not embedded and previews do not autoplay. Publisher JavaScript remains disabled.
+YouTube links and embeds use an inline YouTube player. Public Telegram videos use inline HTML video controls when the public preview exposes a direct HTTPS video source; unavailable sources retain a provider link. Playback does not autoplay. Publisher scripts and iframes are stripped; only generated YouTube frames can execute provider JavaScript.
 
 Settings includes separate text and background color pickers for the light and dark reader themes, with samples and a reset action. Colors persist locally and follow the device appearance.
+
+## Scrolling and media storage
+
+The reader reuses one WebKit view across article switches and sets its native background before rendering, including dark appearance. The navigation bar uses a fixed inline layout, and the load-finished callback no longer resets an in-progress scroll. Queue ordering is cached between queue changes. SwiftData imports, duplicate consolidation, and article preparation saves run on a background model actor; the visible document remains an immutable snapshot.
+
+Images and direct HTTPS videos use a local disk cache capped at 512 MiB, with least-recently-used eviction and an 80 MiB per-file limit. Cached videos support byte-range requests for seeking. Uncached videos stream over HTTPS immediately while a background download warms the cache for reopening. Larger videos still stream but are not cached. Image loading is lazy and decoding is asynchronous. The OS may purge the cache; it is separate from the saved article library.
+
+YouTube uses its official embedded player and WebKit-managed website storage, not a downloadable/offline copy of the video. YouTube embeds require connectivity and may be blocked by the video owner, region, or provider. Telegram signed media URLs may expire; refreshing a public channel obtains current media links for posts still in its preview window.
+
+Device validation: scroll during refresh and preparation with a large library; switch articles repeatedly in dark mode; start scrolling before images finish; verify inline YouTube/Telegram playback and seeking; reopen a cached image/video article offline. Use Instruments Hangs and Time Profiler to verify main-thread latency. CI builds alone do not establish smooth scrolling on a device.

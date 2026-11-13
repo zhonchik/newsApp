@@ -33,7 +33,7 @@ public enum VideoPreview {
         for element in try doc.select("a[href], iframe[src]") {
             let attribute = element.tagName() == "a" ? "href" : "src"
             guard let id = youtubeID(try element.absUrl(attribute)), seen.insert(id).inserted else { continue }
-            cards += card(url: "https://www.youtube.com/watch?v=" + id, poster: "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg", label: "Watch on YouTube")
+            cards += "<figure><iframe src=\"https://www.youtube-nocookie.com/embed/\(id)?playsinline=1\" title=\"YouTube video\" loading=\"lazy\" referrerpolicy=\"strict-origin-when-cross-origin\" allow=\"encrypted-media; fullscreen; picture-in-picture\" allowfullscreen></iframe><figcaption><a href=\"https://www.youtube.com/watch?v=\(id)\">Open on YouTube</a></figcaption></figure>"
         }
         return cards
     }
@@ -42,7 +42,10 @@ public enum VideoPreview {
         for video in try post.select("video") {
             var poster = try video.attr("poster")
             if poster.isEmpty, let container = video.parent() { poster = try backgroundPoster(container) }
-            cards += card(url: url, poster: poster, label: "Watch video on Telegram")
+            let source = try video.attr("src").isEmpty ? video.select("source[src]").first()?.attr("src") ?? "" : video.attr("src")
+            if URL(string: source)?.scheme == "https" {
+                cards += "<figure><video controls playsinline preload=\"metadata\" src=\"\(escape(source))\" poster=\"\(escape(poster))\"></video><figcaption><a href=\"\(escape(url))\">Open on Telegram</a></figcaption></figure>"
+            } else { cards += card(url: url, poster: poster, label: "Watch video on Telegram") }
         }
         if cards.isEmpty, !(try post.select(".tgme_widget_message_video_player, .tgme_widget_message_video_wrap")).isEmpty() {
             cards = card(url: url, poster: try backgroundPoster(post), label: "Watch video on Telegram")
