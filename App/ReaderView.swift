@@ -99,7 +99,7 @@ struct ReaderView: View {
                     .disabled(!feed.contains(where: { !$0.read }))
                 }
                 ToolbarItem {
-                    Button { showSubscriptions = true } label: { Label("Subscriptions", systemImage: "slider.horizontal.3") }
+                    Button { showSubscriptions = true } label: { Label("Settings", systemImage: "slider.horizontal.3") }
                 }
                 if let updateStatus {
                     ToolbarItem { Image(systemName: "exclamationmark.arrow.triangle.2.circlepath").help(updateStatus).accessibilityLabel(updateStatus) }
@@ -170,7 +170,7 @@ struct ReaderView: View {
         var failures: [String] = []
         for subscription in subscriptions {
             do {
-                let items = try await service.itemsWithRetry(for: subscription)
+                let items = try await service.itemsWithRetry(address: subscription.address, kind: subscription.kind)
                 guard !Task.isCancelled else { return }
                 let active = try context.fetch(FetchDescriptor<Subscription>())
                 guard active.contains(where: { $0.id == subscription.id }) else { continue }
@@ -183,7 +183,7 @@ struct ReaderView: View {
                         // Re-adding a feed reconnects its saved articles, including read history.
                         if !active.contains(where: { $0.id == existing.subscriptionID }) { existing.subscriptionID = subscription.id }
                         existing.feedHTML = item.html
-                        if existing.html.isEmpty { existing.html = item.html }
+                        if existing.html.isEmpty || subscription.kind == "telegram" { existing.html = item.html; existing.text = item.text }
                     } else {
                         let article = Article(item: item, subscription: subscription)
                         position += 1; article.queuePosition = position

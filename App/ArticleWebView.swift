@@ -8,7 +8,12 @@ struct ArticleWebView {
     let hiddenText: String
     let move: (Int) -> Void
 
-    private func document() -> String {
+    @AppStorage("lightText") private var lightText = "#202020"
+    @AppStorage("lightBackground") private var lightBackground = "#FFFFFF"
+    @AppStorage("darkText") private var darkText = "#EEEEEE"
+    @AppStorage("darkBackground") private var darkBackground = "#181818"
+
+    nonisolated private static func document(article: ReaderDocument, hiddenText: String, palette: ReaderPalette) -> String {
         func escape(_ text: String) -> String {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
@@ -20,6 +25,8 @@ struct ArticleWebView {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
         <style>
         :root { color-scheme: light dark; font: -apple-system-body; }
+        body { color: \(ReaderPalette.valid(palette.lightText, fallback: "#202020")); background: \(ReaderPalette.valid(palette.lightBackground, fallback: "#FFFFFF")); }
+        @media (prefers-color-scheme: dark) { body { color: \(ReaderPalette.valid(palette.darkText, fallback: "#EEEEEE")); background: \(ReaderPalette.valid(palette.darkBackground, fallback: "#181818")); } }
         body { margin:0 auto; padding:0 24px 24px; max-width:680px; overflow-wrap:anywhere; }
         article { font-family: Georgia, serif; font-size:1.15em; line-height:1.7; }
         h1 { font-family: Georgia, serif; font-size:1.4em; line-height:1.3; }
@@ -35,8 +42,8 @@ struct ArticleWebView {
         <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
         """
     }
-    func makeCoordinator() -> Coordinator { Coordinator(move: move) }
-    func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
+    @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move) }
+    @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         let webView = ReaderWebView(frame: .zero, configuration: config)
@@ -53,16 +60,31 @@ struct ArticleWebView {
         #endif
         return webView
     }
-    func update(_ webView: ReaderWebView, coordinator: Coordinator) {
+    @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
         coordinator.move = move; webView.move = move
-        let html = document()
-        guard coordinator.document != html else { return }
-        coordinator.document = html
-        webView.loadHTMLString(html, baseURL: URL(string: article.url))
+        let palette = ReaderPalette(lightText: lightText, lightBackground: lightBackground, darkText: darkText, darkBackground: darkBackground)
+        let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette)
+        guard coordinator.input != input else { return }
+        coordinator.input = input
+        coordinator.renderTask?.cancel()
+        coordinator.renderTask = Task { @MainActor [weak webView, weak coordinator] in
+            let html = await Task.detached(priority: .userInitiated) {
+                Self.document(article: input.article, hiddenText: input.hiddenText, palette: input.palette)
+            }.value
+            guard !Task.isCancelled, let coordinator, coordinator.input == input else { return }
+            webView?.loadHTMLString(html, baseURL: URL(string: input.article.url))
+        }
     }
-    class Coordinator: NSObject, WKNavigationDelegate {
+    struct RenderInput: Equatable, Sendable {
+        let article: ReaderDocument
+        let hiddenText: String
+        let palette: ReaderPalette
+    }
+    @MainActor class Coordinator: NSObject, WKNavigationDelegate {
         var move: (Int) -> Void
-        var document = ""
+        var input: RenderInput?
+        var renderTask: Task<Void, Never>?
+        deinit { renderTask?.cancel() }
         init(move: @escaping (Int) -> Void) { self.move = move }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             #if os(iOS)

@@ -5,6 +5,7 @@ public enum ReaderContent {
     /// Preserve publisher feed photos when full-text extraction omits them.
     /// Resolve relative URLs before sanitizing so WebKit and the cleaner agree.
     public static func html(body: String, feed: String, baseURL: String, hiddenText: String = "") throws -> String {
+        let previews = try VideoPreview.youtube(in: body + feed, baseURL: baseURL)
         let document = try SwiftSoup.parse(body, baseURL)
         try ContentRules.clean(document, url: baseURL, hiddenText: hiddenText)
         var bodyImages = Set<String>()
@@ -31,6 +32,7 @@ public enum ReaderContent {
             }
             try document.body()?.prepend(photos)
         }
+        try document.body()?.append(previews)
         return try SwiftSoup.clean(document.body()?.html() ?? body, baseURL, Whitelist.relaxed()) ?? ""
     }
 }
