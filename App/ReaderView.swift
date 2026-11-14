@@ -18,10 +18,21 @@ struct ReaderView: View {
     @State private var lastRefresh = Date.distantPast
     @State private var updateStatus: String?
     @State private var errorMessage: String?
-    private var feed: [Article] {
+    @State private var worker: LibraryWorker?
+    @State private var feed: [Article] = []
+    @State private var identities: [String: String] = [:]
+    private func rebuildFeed() {
         var seen = Set<String>()
-        let unique = articles.filter { !$0.queued && seen.insert(ArticleIdentity.key(url: $0.url, fallback: $0.key)).inserted }
-        return ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
+        var cachedIdentities = identities
+        let unique = articles.filter { article in
+            guard !article.queued else { return false }
+            let lookup = article.url + "|" + article.key
+            let identity = cachedIdentities[lookup] ?? ArticleIdentity.key(url: article.url, fallback: article.key)
+            cachedIdentities[lookup] = identity
+            return seen.insert(identity).inserted
+        }
+        identities = cachedIdentities
+        feed = ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
     }
     private var current: Article? { feed.first { $0.key == selected } }
     private var visibleDocument: ReaderDocument? {
@@ -35,6 +46,10 @@ struct ReaderView: View {
         NavigationStack {
             readerContent
             .toolbar { readerToolbar }
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.visible, for: .navigationBar)
+            #endif
             .sheet(isPresented: $showSubscriptions) { SubscriptionsView() }
             .alert("Couldn't save library", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK") { errorMessage = nil }
@@ -48,7 +63,12 @@ struct ReaderView: View {
                 for subscription in subscriptions where subscription.hiddenText == ContentRules.telegramNotice {
                     subscription.hiddenText = ContentRules.telegramNotice + "\n" + ContentRules.telegramNoticeVariant
                 }
-                migrateLibrary(); restore(); initialized = true
+                save()
+                let container = context.container
+                let background = await Task.detached(priority: .utility) { LibraryWorker(modelContainer: container) }.value
+                worker = background
+                do { try await background.migrateLibrary() } catch { errorMessage = error.localizedDescription }
+                rebuildFeed(); restore(); initialized = true
                 await refresh(force: true)
             }
             .task {
@@ -68,13 +88,13 @@ struct ReaderView: View {
                 if key == feed.last?.key { Task { await refresh() } }
             }
             .onChange(of: phase) { _, value in if value == .active && initialized { Task { await refresh() } } }
+            .onChange(of: articles.map { QueueStamp(key: $0.key, queued: $0.queued, read: $0.read, queue: $0.queuePosition, history: $0.readPosition) }, initial: true) { _, _ in rebuildFeed(); restore() }
             .onChange(of: feed.map(\.key)) { _, _ in restore() }
         }.tint(Color(red: 0.14, green: 0.54, blue: 0.51))
     }
     @ViewBuilder private var readerContent: some View {
                 if let document = visibleDocument {
                     ArticleWebView(article: document, hiddenText: hiddenText, move: move)
-                        .id(document.key)
                         .accessibilityAction(named: "Next article") { move(1) }
                         .accessibilityAction(named: "Previous article") { move(-1) }
 
@@ -116,7 +136,7 @@ struct ReaderView: View {
         candidates.append(contentsOf: feed.filter { $0.read && $0.key != selected })
         for article in candidates {
             guard !Task.isCancelled, phase == .active else { return }
-            await preparation.prepare(article, context: context)
+            if let worker { await preparation.prepare(article, worker: worker) }
         }
     }
     private func restore() {
@@ -133,69 +153,18 @@ struct ReaderView: View {
         selected = feed[next].key
     }
     private func save() { do { try context.save() } catch { errorMessage = error.localizedDescription } }
-    private func migrateLibrary() {
-        do {
-            let all = try context.fetch(FetchDescriptor<Article>()).sorted {
-                if $0.queuePosition != $1.queuePosition { return $0.queuePosition < $1.queuePosition }
-                if $0.published != $1.published { return $0.published < $1.published }
-                return $0.key < $1.key
-            }
-            var known: [String: Article] = [:]
-            var position = all.map(\.queuePosition).max() ?? 0
-            var readPosition = all.map(\.readPosition).max() ?? 0
-            for article in all {
-                let identity = ArticleIdentity.key(url: article.url, fallback: article.key)
-                if let kept = known[identity] {
-                    kept.read = kept.read || article.read
-                    if kept.read && kept.readPosition == 0 { readPosition += 1; kept.readPosition = readPosition }
-                    if kept.html.isEmpty { kept.html = article.html }
-                    if kept.feedHTML.isEmpty { kept.feedHTML = article.feedHTML }
-                    for bookmark in positions where bookmark.articleKey == article.key { bookmark.articleKey = kept.key }
-                    if selected == article.key { selected = kept.key }
-                    context.delete(article)
-                } else {
-                    known[identity] = article
-                    if article.read && article.readPosition == 0 { readPosition += 1; article.readPosition = readPosition }
-                    if article.queuePosition == 0 { position += 1; article.queuePosition = position }
-                }
-            }
-            save()
-        } catch { errorMessage = error.localizedDescription }
-    }
     @MainActor private func refresh(force: Bool = false) async {
         guard !refreshing, !subscriptions.isEmpty, force || Date().timeIntervalSince(lastRefresh) >= 60 else { return }
         refreshing = true; lastRefresh = Date()
         defer { refreshing = false }
-        migrateLibrary()
+        guard let worker else { return }
+        do { try await worker.migrateLibrary() } catch { errorMessage = error.localizedDescription }
         var failures: [String] = []
         for subscription in subscriptions {
             do {
                 let items = try await service.itemsWithRetry(address: subscription.address, kind: subscription.kind)
                 guard !Task.isCancelled else { return }
-                let active = try context.fetch(FetchDescriptor<Subscription>())
-                guard active.contains(where: { $0.id == subscription.id }) else { continue }
-                let all = try context.fetch(FetchDescriptor<Article>())
-                var known = Dictionary(all.map { (ArticleIdentity.key(url: $0.url, fallback: $0.key), $0) }, uniquingKeysWith: { first, _ in first })
-                var position = all.map(\.queuePosition).max() ?? 0
-                for item in items.sorted(by: { ($0.published, $0.id) < ($1.published, $1.id) }) {
-                    let key = ArticleIdentity.key(url: item.url, fallback: subscription.address + ":" + item.id)
-                    if let existing = known[key] {
-                        // Re-adding a feed reconnects its saved articles, including read history.
-                        if !active.contains(where: { $0.id == existing.subscriptionID }) { existing.subscriptionID = subscription.id }
-                        existing.feedHTML = item.html
-                        if existing.html.isEmpty || subscription.kind == "telegram" { existing.html = item.html; existing.text = item.text }
-                    } else {
-                        let article = Article(item: item, subscription: subscription)
-                        position += 1; article.queuePosition = position
-                        context.insert(article); known[key] = article
-                    }
-                }
-                if !subscription.paused {
-                    for article in known.values.filter({ $0.subscriptionID == subscription.id && $0.queued }).sorted(by: { $0.queuePosition < $1.queuePosition }) {
-                        position += 1; article.queuePosition = position; article.queued = false
-                    }
-                }
-                save()
+                try await worker.importItems(items, subscriptionID: subscription.id)
             } catch is CancellationError { return }
             catch { failures.append("\(subscription.name): \(error.localizedDescription)") }
         }
@@ -211,5 +180,9 @@ struct ReaderView: View {
             article.read = true
         }
         save()
+        rebuildFeed()
+    }
+    private struct QueueStamp: Equatable {
+        let key: String; let queued: Bool; let read: Bool; let queue: Int; let history: Int
     }
 }

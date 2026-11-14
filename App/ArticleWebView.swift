@@ -2,8 +2,9 @@ import SwiftUI
 import WebKit
 import SwiftSoup
 
-/// A single scrolling reader document. Publisher scripts and embeds cannot execute.
+/// A persistent reader document. Only generated YouTube embeds may run provider scripts.
 struct ArticleWebView {
+    @Environment(\.colorScheme) private var colorScheme
     let article: ReaderDocument
     let hiddenText: String
     let move: (Int) -> Void
@@ -13,16 +14,16 @@ struct ArticleWebView {
     @AppStorage("darkText") private var darkText = "#EEEEEE"
     @AppStorage("darkBackground") private var darkBackground = "#181818"
 
-    nonisolated private static func document(article: ReaderDocument, hiddenText: String, palette: ReaderPalette) -> String {
+    nonisolated private static func document(article: ReaderDocument, hiddenText: String, palette: ReaderPalette) async -> String {
         func escape(_ text: String) -> String {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
         let fallback = "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
         let body = (try? ReaderContent.html(body: article.html.isEmpty ? fallback : article.html, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)) ?? fallback
         let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
-        return """
+        let html = """
         <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: reader-media:; media-src https: reader-media:; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
         <style>
         :root { color-scheme: light dark; font: -apple-system-body; }
         body { color: \(ReaderPalette.valid(palette.lightText, fallback: "#202020")); background: \(ReaderPalette.valid(palette.lightBackground, fallback: "#FFFFFF")); }
@@ -31,7 +32,8 @@ struct ArticleWebView {
         article { font-family: Georgia, serif; font-size:1.15em; line-height:1.7; }
         h1 { font-family: Georgia, serif; font-size:1.4em; line-height:1.3; }
         h2,h3,h4 { line-height:1.3; } img { max-width:100%; height:auto; border-radius:6px; }
-        img:not([width][height]) { width:100%; aspect-ratio:16/9; object-fit:contain; }
+        video, iframe { display:block; width:100%; height:auto; aspect-ratio:16/9; border:0; background:#181818; object-fit:contain; }
+        img:not([width][height]) { width:100%; height:auto; aspect-ratio:16/9; object-fit:contain; }
         figure img { width:100%; }
         figure { margin:1.5em 0; } figcaption,header,footer { font: -apple-system-caption1; color: GrayText; }
         a { color: #298c81; } blockquote { border-left:3px solid #298c81; margin:1em 0; padding-left:1em; }
@@ -41,13 +43,22 @@ struct ArticleWebView {
         \(headline)<article>\(body)</article>
         <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
         """
+        return (try? await MediaCache.shared.rewrite(html)) ?? html
     }
     @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move) }
     @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
         let config = WKWebViewConfiguration()
-        config.defaultWebpagePreferences.allowsContentJavaScript = false
+        // The parent CSP blocks scripts; only the allowlisted YouTube frame runs JS.
+        config.defaultWebpagePreferences.allowsContentJavaScript = true
+        config.websiteDataStore = .default()
+        config.setURLSchemeHandler(MediaSchemeHandler(), forURLScheme: "reader-media")
+        #if os(iOS)
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = .all
+        #endif
         let webView = ReaderWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = coordinator
+        applyBackground(webView)
         webView.move = move
         #if os(iOS)
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -62,6 +73,7 @@ struct ArticleWebView {
     }
     @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
         coordinator.move = move; webView.move = move
+        applyBackground(webView)
         let palette = ReaderPalette(lightText: lightText, lightBackground: lightBackground, darkText: darkText, darkBackground: darkBackground)
         let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette)
         guard coordinator.input != input else { return }
@@ -69,11 +81,25 @@ struct ArticleWebView {
         coordinator.renderTask?.cancel()
         coordinator.renderTask = Task { @MainActor [weak webView, weak coordinator] in
             let html = await Task.detached(priority: .userInitiated) {
-                Self.document(article: input.article, hiddenText: input.hiddenText, palette: input.palette)
+                await Self.document(article: input.article, hiddenText: input.hiddenText, palette: input.palette)
             }.value
             guard !Task.isCancelled, let coordinator, coordinator.input == input else { return }
-            webView?.loadHTMLString(html, baseURL: URL(string: input.article.url))
+            // A stable HTTPS base supplies the Referer required by YouTube embeds.
+            webView?.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
         }
+    }
+    @MainActor private func applyBackground(_ webView: ReaderWebView) {
+        let hex = ReaderPalette.valid(colorScheme == .dark ? darkBackground : lightBackground, fallback: colorScheme == .dark ? "#181818" : "#FFFFFF")
+        let rgb = UInt32(hex.dropFirst(), radix: 16) ?? 0
+        #if os(iOS)
+        let color = UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
+        webView.isOpaque = false
+        webView.backgroundColor = color
+        webView.scrollView.backgroundColor = color
+        webView.underPageBackgroundColor = color
+        #else
+        webView.underPageBackgroundColor = NSColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
+        #endif
     }
     struct RenderInput: Equatable, Sendable {
         let article: ReaderDocument
@@ -86,12 +112,9 @@ struct ArticleWebView {
         var renderTask: Task<Void, Never>?
         deinit { renderTask?.cancel() }
         init(move: @escaping (Int) -> Void) { self.move = move }
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            #if os(iOS)
-            webView.scrollView.setContentOffset(.zero, animated: false)
-            #endif
-        }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            // Allow provider navigation inside the embedded player only.
+            if action.targetFrame?.isMainFrame == false { decisionHandler(.allow); return }
             guard action.navigationType == .linkActivated else { decisionHandler(.allow); return }
             if let url = action.request.url, ["https", "http"].contains(url.scheme ?? "") {
                 #if os(iOS)
