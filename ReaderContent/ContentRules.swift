@@ -18,7 +18,7 @@ public enum ContentRules {
             var seen = Set<String>()
             var gallery = ""
             for image in images {
-                var source = try image.absUrl("src")
+                guard var source = MediaURL.resolve(try image.attr("src"), baseURL: url) else { continue }
                 if let parsed = URL(string: source), let range = parsed.path.range(of: "/gallery/") {
                     // The gallery thumbnails point to cropped copies; the photo page
                     // uses this full-size publisher CDN path.
@@ -60,8 +60,7 @@ public enum ContentRules {
         for image in try body.select("img") {
             let lazy = try image.attr("data-src")
             if !lazy.isEmpty { try image.attr("src", lazy) }
-            let absolute = try image.absUrl("src")
-            if !absolute.isEmpty { try image.attr("src", absolute) }
+            if let absolute = MediaURL.resolve(try image.attr("src"), baseURL: url) { try image.attr("src", absolute) }
         }
         return try body.html()
     }

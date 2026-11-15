@@ -27,6 +27,28 @@ final class MediaCacheTests: XCTestCase {
         XCTAssertEqual(cached.file, file)
         XCTAssertEqual(try Data(contentsOf: cached.file), original)
     }
+    func testMalformedFeedImageUsesCorrectCachedFileWithoutNetwork() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let correct = "https://c.f1news.ru/gallery/2026/photo.jpg"
+        let malformed = "https://c.f1news.ru" + correct
+        let name = SHA256.hash(data: Data(correct.utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = root.appendingPathComponent(name)
+        try Data([1, 2, 3]).write(to: file)
+        try JSONEncoder().encode(MediaCache.Entry(file: file, mime: "image/jpeg", size: 3)).write(to: file.appendingPathExtension("json"))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfflineProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let cache = MediaCache(directory: root, limitBytes: 8192, session: session)
+        try await cache.prefetchImages("<img src='\(malformed)'>", baseURL: "https://www.f1news.ru/news/story")
+        let entry = try await cache.entry(for: XCTUnwrap(URL(string: malformed)))
+        XCTAssertEqual(entry.file, file)
+        let rendered = try await cache.rewrite("<img src='\(malformed)'>")
+        XCTAssertTrue(rendered.contains("reader-media://c.f1news.ru/gallery/2026/photo.jpg"))
+        XCTAssertFalse(rendered.contains("ruhttps"))
+    }
     func testOpeningVideoDocumentDoesNotDownloadVideo() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

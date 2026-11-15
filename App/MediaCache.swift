@@ -44,7 +44,8 @@ actor MediaCache {
         for video in try doc.select("video") { try video.attr("preload", "none") }
         return try doc.outerHtml()
     }
-    func entry(for url: URL, force: Bool = false) async throws -> Entry {
+    func entry(for requestedURL: URL, force: Bool = false) async throws -> Entry {
+        guard let normalized = MediaURL.resolve(requestedURL.absoluteString), let url = URL(string: normalized) else { throw URLError(.badURL) }
         let name = SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
         let file = directory.appendingPathComponent(name)
         let metadata = file.appendingPathExtension("json")
@@ -122,7 +123,7 @@ actor MediaCache {
         var urls = Set<URL>()
         for image in try doc.select("img[src], video[poster]") {
             let attr = image.tagName() == "video" ? "poster" : "src"
-            if let url = URL(string: try image.absUrl(attr)), url.scheme == "https" { urls.insert(url) }
+            if let normalized = MediaURL.resolve(try image.attr(attr), baseURL: baseURL), let url = URL(string: normalized) { urls.insert(url) }
         }
         // Bound concurrency and memory; URLSession downloads to temporary files.
         var failure: Error?
