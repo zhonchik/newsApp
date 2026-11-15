@@ -12,17 +12,19 @@ actor MediaCache {
     private var pending: [URL: Task<Entry, Error>] = [:]
     private let directory: URL
     private let limitOverride: Int?
-    init(directory: URL? = nil, limitBytes: Int? = nil) {
+    init(directory: URL? = nil, limitBytes: Int? = nil, session: URLSession? = nil) {
         self.directory = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("ReaderMedia", isDirectory: true)
         limitOverride = limitBytes
+        self.session = session ?? Self.makeSession()
     }
-    private let session: URLSession = {
+    private let session: URLSession
+    private static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.default
         config.httpMaximumConnectionsPerHost = 4
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 180
         return URLSession(configuration: config)
-    }()
+    }
     func rewrite(_ html: String) throws -> String {
         let doc = try SwiftSoup.parse(html)
         for image in try doc.select("img[src], video[poster]") {
@@ -32,7 +34,7 @@ actor MediaCache {
         }
         for video in try doc.select("video[src], source[src]") {
             let raw = try video.attr("src")
-            guard let remote = URL(string: raw), let cached = MediaRequest.cachedURL(raw) else { continue }
+            guard let cached = MediaRequest.cachedURL(raw) else { continue }
             let name = SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
             if FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path),
                FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).appendingPathExtension("json").path) {
@@ -53,9 +55,11 @@ actor MediaCache {
             return Entry(file: file, mime: entry.mime, size: entry.size)
         }
         if let task = pending[url] { return try await task.value }
-        // Recover a partial entry if the process stopped between file and metadata writes.
-        try? FileManager.default.removeItem(at: file)
-        try? FileManager.default.removeItem(at: metadata)
+        // A forced refresh keeps the previous offline copy until replacement succeeds.
+        if !force {
+            try? FileManager.default.removeItem(at: file)
+            try? FileManager.default.removeItem(at: metadata)
+        }
         let task = Task { try await self.download(url, file: file, metadata: metadata) }
         pending[url] = task
         defer { pending[url] = nil }
@@ -71,7 +75,10 @@ actor MediaCache {
               let mime = response.mimeType, mime.hasPrefix("image/") || mime.hasPrefix("video/") else { throw URLError(.badServerResponse) }
         let count = (try temporary.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
         guard count > 0, count <= min(80 * 1024 * 1024, limit - 4096) else { throw URLError(.dataLengthExceedsMaximum) }
-        try FileManager.default.moveItem(at: temporary, to: file)
+        if FileManager.default.fileExists(atPath: file.path) {
+            _ = try FileManager.default.replaceItemAt(file, withItemAt: temporary)
+        } else { try FileManager.default.moveItem(at: temporary, to: file) }
+        try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
         let entry = Entry(file: file, mime: mime, size: count)
         do { try JSONEncoder().encode(entry).write(to: metadata, options: .atomic) }
         catch { try? FileManager.default.removeItem(at: file); throw error }

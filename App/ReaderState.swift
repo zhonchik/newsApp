@@ -48,6 +48,7 @@ import SwiftData
         let snapshot = try await worker.snapshot()
         articles = snapshot.articles; subscriptions = snapshot.subscriptions
         selection = ReaderSelection.restored(keys: articles.map(\.key), current: selection, saved: snapshot.savedKey)
+        if selection.isEmpty { document = nil }
     }
     func loadSelected() async {
         guard let worker, let link = current else { return }
