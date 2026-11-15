@@ -1,9 +1,23 @@
+#if SWIFT_PACKAGE
+import ReaderContent
+#endif
 import Foundation
 import SwiftData
 
 /// Constructed in a detached task so SwiftData owns a background executor.
 @ModelActor actor LibraryWorker {
     func migrateLibrary() throws {
+            let modelContext = freshContext()
+            let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>())
+            for subscription in subscriptions {
+                if !subscription.contentDefaultsApplied {
+                    subscription.hiddenText = ContentRules.defaultHiddenText(address: subscription.address)
+                    subscription.contentDefaultsApplied = true
+                }
+                if subscription.hiddenText == ContentRules.telegramNotice {
+                    subscription.hiddenText += "\n" + ContentRules.telegramNoticeVariant
+                }
+            }
             let positions = try modelContext.fetch(FetchDescriptor<ReadingPosition>())
             let all = try modelContext.fetch(FetchDescriptor<Article>()).sorted {
                 if $0.queuePosition != $1.queuePosition { return $0.queuePosition < $1.queuePosition }
@@ -30,38 +44,89 @@ import SwiftData
             }
             try modelContext.save()
     }
-    func importItems(_ items: [RemoteArticle], subscriptionID: UUID) throws {
-                let active = try modelContext.fetch(FetchDescriptor<Subscription>())
-                guard let subscription = active.first(where: { $0.id == subscriptionID }) else { return }
-                let all = try modelContext.fetch(FetchDescriptor<Article>())
-                var known = Dictionary(all.map { (ArticleIdentity.key(url: $0.url, fallback: $0.key), $0) }, uniquingKeysWith: { first, _ in first })
-                var position = all.map(\.queuePosition).max() ?? 0
-                for item in items.sorted(by: { ($0.published, $0.id) < ($1.published, $1.id) }) {
-                    let key = ArticleIdentity.key(url: item.url, fallback: subscription.address + ":" + item.id)
-                    if let existing = known[key] {
-                        // Re-adding a feed reconnects its saved articles, including read history.
-                        if !active.contains(where: { $0.id == existing.subscriptionID }) { existing.subscriptionID = subscription.id }
-                        existing.feedHTML = item.html
-                        if existing.html.isEmpty || subscription.kind == "telegram" { existing.html = item.html; existing.text = item.text }
-                    } else {
-                        let article = Article(item: item, subscription: subscription)
-                        position += 1; article.queuePosition = position
-                        modelContext.insert(article); known[key] = article
-                    }
-                }
-                if !subscription.paused {
-                    for article in known.values.filter({ $0.subscriptionID == subscription.id && $0.queued }).sorted(by: { $0.queuePosition < $1.queuePosition }) {
-                        position += 1; article.queuePosition = position; article.queued = false
-                    }
-                }
-                try modelContext.save()
+    private func freshContext() -> ModelContext {
+        let context = ModelContext(modelContainer)
+        context.autosaveEnabled = false
+        return context
     }
-    func savePrepared(key: String, html: String, text: String) throws {
-        let descriptor = FetchDescriptor<Article>(predicate: #Predicate { $0.key == key })
-        guard let article = try modelContext.fetch(descriptor).first else { return }
-        article.html = html; article.text = text
-        article.extracted = true; article.richExtracted = true
-        article.contentRevision = ContentRules.revision
-        try modelContext.save()
+    func snapshot() throws -> LibrarySnapshot {
+        let context = freshContext()
+        let subscriptions = try context.fetch(FetchDescriptor<Subscription>(sortBy: [SortDescriptor(\.created)]))
+        let all = try context.fetch(FetchDescriptor<Article>())
+        var seen = Set<String>()
+        let unique = all.filter { !$0.queued && seen.insert(ArticleIdentity.key(url: $0.url, fallback: $0.key)).inserted }
+        let ordered = ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
+        let positions = try context.fetch(FetchDescriptor<ReadingPosition>(sortBy: [SortDescriptor(\.changed, order: .reverse)]))
+        return LibrarySnapshot(articles: ordered.map { article in
+            ArticleLink(article, hiddenText: subscriptions.first(where: { $0.id == article.subscriptionID })?.hiddenText ?? "")
+        }, subscriptions: subscriptions.map { SubscriptionInfo(id: $0.id, name: $0.name, address: $0.address, kind: $0.kind) }, savedKey: positions.first?.articleKey ?? "")
+    }
+    func markOpened(_ key: String) throws {
+        let context = freshContext()
+        guard let article = try context.fetch(FetchDescriptor<Article>(predicate: #Predicate { $0.key == key })).first else { return }
+        if !article.read {
+            var descriptor = FetchDescriptor<Article>(sortBy: [SortDescriptor(\.readPosition, order: .reverse)])
+            descriptor.fetchLimit = 1
+            article.readPosition = (try context.fetch(descriptor).first?.readPosition ?? 0) + 1
+            article.read = true
+        }
+        let positions = try context.fetch(FetchDescriptor<ReadingPosition>(sortBy: [SortDescriptor(\.changed, order: .reverse)]))
+        if let position = positions.first { position.articleKey = key; position.changed = Date() }
+        else { context.insert(ReadingPosition(articleKey: key)) }
+        try context.save()
+    }
+    /// Upgrade old installations without dropping the only offline copy first.
+    func migrateContent(key: String? = nil, cache: MediaCache = .shared) async throws {
+        let context = freshContext()
+        let articles: [Article]
+        if let key { articles = try context.fetch(FetchDescriptor<Article>(predicate: #Predicate { $0.key == key })) }
+        else { articles = try context.fetch(FetchDescriptor<Article>()) }
+        for article in articles where !article.html.isEmpty || !article.text.isEmpty || !article.feedHTML.isEmpty {
+            try Task.checkCancellation()
+            if await cache.article(article.key) == nil {
+                try await cache.storeArticle(CachedArticle(text: article.text, html: article.html, feedHTML: article.feedHTML, revision: article.contentRevision), key: article.key)
+            }
+            article.text = ""; article.html = ""; article.feedHTML = ""
+            try context.save()
+        }
+    }
+    func importItems(_ items: [RemoteArticle], subscriptionID: UUID, cache: MediaCache = .shared) async throws -> [ArticleLink] {
+        let context = freshContext()
+        let active = try context.fetch(FetchDescriptor<Subscription>())
+        guard let subscription = active.first(where: { $0.id == subscriptionID }) else { return [] }
+        let all = try context.fetch(FetchDescriptor<Article>())
+        var known = Dictionary(all.map { (ArticleIdentity.key(url: $0.url, fallback: $0.key), $0) }, uniquingKeysWith: { first, _ in first })
+        var position = all.map(\.queuePosition).max() ?? 0
+        var result: [(ArticleLink, RemoteArticle)] = []
+        for item in items.sorted(by: { ($0.published, $0.id) < ($1.published, $1.id) }) {
+            let key = ArticleIdentity.key(url: item.url, fallback: subscription.address + ":" + item.id)
+            let article: Article
+            if let existing = known[key] {
+                article = existing
+                if !active.contains(where: { $0.id == article.subscriptionID }) { article.subscriptionID = subscription.id }
+                article.title = item.title; article.source = subscription.name
+            } else {
+                article = Article(item: item, subscription: subscription)
+                // Payload lives in the evictable local cache, never the permanent link record.
+                article.text = ""; article.html = ""; article.feedHTML = ""
+                position += 1; article.queuePosition = position
+                context.insert(article); known[key] = article
+            }
+            result.append((ArticleLink(article, hiddenText: subscription.hiddenText), item))
+        }
+        if !subscription.paused {
+            for article in known.values.filter({ $0.subscriptionID == subscription.id && $0.queued }).sorted(by: { $0.queuePosition < $1.queuePosition }) {
+                position += 1; article.queuePosition = position; article.queued = false
+            }
+        }
+        try context.save()
+        for (link, item) in result {
+            let cached = await cache.article(link.key)
+            if cached?.feedHTML != item.html {
+                let revision = subscription.kind == "telegram" ? ContentRules.revision : 0
+                try await cache.storeArticle(CachedArticle(text: item.text, html: item.html, feedHTML: item.html, revision: revision), key: link.key)
+            }
+        }
+        return result.map { $0.0 }
     }
 }

@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import ReaderContent
+#endif
 import Foundation
 import CryptoKit
 import WebKit
@@ -7,7 +10,12 @@ actor MediaCache {
     static let shared = MediaCache()
     struct Entry: Codable, Sendable { let file: URL; let mime: String; let size: Int }
     private var pending: [URL: Task<Entry, Error>] = [:]
-    private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("ReaderMedia", isDirectory: true)
+    private let directory: URL
+    private let limitOverride: Int?
+    init(directory: URL? = nil, limitBytes: Int? = nil) {
+        self.directory = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("ReaderMedia", isDirectory: true)
+        limitOverride = limitBytes
+    }
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.httpMaximumConnectionsPerHost = 4
@@ -29,21 +37,20 @@ actor MediaCache {
             if FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path),
                FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).appendingPathExtension("json").path) {
                 try video.attr("src", cached)
-            } else {
-                // Stream immediately over HTTPS on first play while warming disk cache.
-                Task(priority: .utility) { _ = try? await self.entry(for: remote) }
             }
         }
+        for video in try doc.select("video") { try video.attr("preload", "none") }
         return try doc.outerHtml()
     }
-    func entry(for url: URL) async throws -> Entry {
+    func entry(for url: URL, force: Bool = false) async throws -> Entry {
         let name = SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
         let file = directory.appendingPathComponent(name)
         let metadata = file.appendingPathExtension("json")
-        if let data = try? Data(contentsOf: metadata), let entry = try? JSONDecoder().decode(Entry.self, from: data),
-           FileManager.default.fileExists(atPath: entry.file.path) {
+        if !force, let data = try? Data(contentsOf: metadata), let entry = try? JSONDecoder().decode(Entry.self, from: data),
+           FileManager.default.fileExists(atPath: file.path) {
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
-            return entry
+            // App updates can move the sandbox; never reuse an old absolute path.
+            return Entry(file: file, mime: entry.mime, size: entry.size)
         }
         if let task = pending[url] { return try await task.value }
         // Recover a partial entry if the process stopped between file and metadata writes.
@@ -56,32 +63,82 @@ actor MediaCache {
     }
     private func download(_ url: URL, file: URL, metadata: URL) async throws -> Entry {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let (temporary, response) = try await session.download(from: url, delegate: MediaDownloadLimit())
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (temporary, response) = try await session.download(for: request, delegate: MediaDownloadLimit())
         defer { try? FileManager.default.removeItem(at: temporary) }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let mime = response.mimeType, mime.hasPrefix("image/") || mime.hasPrefix("video/") else { throw URLError(.badServerResponse) }
         let count = (try temporary.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
-        guard count > 0, count <= 80 * 1024 * 1024 else { throw URLError(.dataLengthExceedsMaximum) }
+        guard count > 0, count <= min(80 * 1024 * 1024, limit - 4096) else { throw URLError(.dataLengthExceedsMaximum) }
         try FileManager.default.moveItem(at: temporary, to: file)
         let entry = Entry(file: file, mime: mime, size: count)
         do { try JSONEncoder().encode(entry).write(to: metadata, options: .atomic) }
         catch { try? FileManager.default.removeItem(at: file); throw error }
-        trim(except: file)
+        try trim()
         return entry
     }
-    private func trim(except current: URL) {
-        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
-        let entries = files.filter { $0.pathExtension.isEmpty }.compactMap { url -> (URL, Int, Date)? in
-            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
-            return (url, values.fileSize ?? 0, values.contentModificationDate ?? .distantPast)
-        }.sorted { $0.2 < $1.2 }
-        var size = entries.reduce(0) { $0 + $1.1 }
-        for (url, bytes, _) in entries where size > 512 * 1024 * 1024 && url != current {
-            try? FileManager.default.removeItem(at: url)
-            try? FileManager.default.removeItem(at: url.appendingPathExtension("json"))
-            size -= bytes
+    static let limitKey = "readerCacheLimitMB"
+    private var limit: Int {
+        if let limitOverride { return limitOverride }
+        let stored = UserDefaults.standard.integer(forKey: Self.limitKey)
+        return max(64, stored == 0 ? 512 : min(8192, stored)) * 1024 * 1024
+    }
+    private func articleFile(_ key: String) -> URL {
+        let name = SHA256.hash(data: Data(("article:" + key).utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(name)
+    }
+    func article(_ key: String) -> CachedArticle? {
+        let file = articleFile(key)
+        guard let data = try? Data(contentsOf: file), let article = try? JSONDecoder().decode(CachedArticle.self, from: data) else { return nil }
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+        return article
+    }
+    func storeArticle(_ article: CachedArticle, key: String) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(article).write(to: articleFile(key), options: .atomic)
+        try trim()
+    }
+    /// Subscription refresh warms images/posters, never video data.
+    func prefetchImages(_ html: String, baseURL: String, force: Bool = false) async throws {
+        let doc = try SwiftSoup.parse(html, baseURL)
+        var urls = Set<URL>()
+        for image in try doc.select("img[src], video[poster]") {
+            let attr = image.tagName() == "video" ? "poster" : "src"
+            if let url = URL(string: try image.absUrl(attr)), url.scheme == "https" { urls.insert(url) }
+        }
+        // Bound concurrency and memory; URLSession downloads to temporary files.
+        var failure: Error?
+        for url in urls.sorted(by: { $0.absoluteString < $1.absoluteString }) {
+            try Task.checkCancellation()
+            do { _ = try await entry(for: url, force: force) }
+            catch { failure = error }
+        }
+        if let failure { throw failure }
+    }
+    func usage() throws -> Int {
+        try trim()
+        return try files().reduce(0) { $0 + $1.bytes }
+    }
+    private func files() throws -> [CachePolicy.Item] {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        let urls = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])
+        // Metadata is counted with its payload, so the displayed size includes sidecars.
+        return try urls.filter { $0.pathExtension.isEmpty }.map { url in
+            let value = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let metadata = try? url.appendingPathExtension("json").resourceValues(forKeys: [.fileSizeKey])
+            return CachePolicy.Item(key: url.lastPathComponent, bytes: (value.fileSize ?? 0) + (metadata?.fileSize ?? 0), accessed: value.contentModificationDate ?? .distantPast)
         }
     }
+    func trim() throws {
+        for name in CachePolicy.evictions(try files(), limit: limit) {
+            let file = directory.appendingPathComponent(name)
+            try FileManager.default.removeItem(at: file)
+            let metadata = file.appendingPathExtension("json")
+            if FileManager.default.fileExists(atPath: metadata.path) { try FileManager.default.removeItem(at: metadata) }
+        }
+    }
+
 }
 
 /// Serializes stop and callbacks: WebKit must never receive a callback after stop.

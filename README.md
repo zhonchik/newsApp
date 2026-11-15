@@ -12,7 +12,7 @@ A universal SwiftUI news reader for iPhone, iPad and Mac. One article, room to r
 - Full article extraction using Mozilla Readability locally; feed text remains available when extraction fails.
 - Pause a subscription while collecting new items into a persisted queue; resume appends its backlog to the end of the reading queue. Existing visible stories stay readable.
 - Local SwiftData library with private CloudKit synchronization for articles, subscriptions, pause state and reading position.
-- System light/dark appearance, scalable native typography, selectable text, offline cached articles.
+- System light/dark appearance, scalable native typography, selectable text, offline cached articles while their data remains in the cache.
 
 ## Build the Apple app
 
@@ -46,7 +46,7 @@ The app downloads RSS/Atom and public Telegram pages directly with URLSession. M
 
 Collection runs at launch, on returning to the foreground, every five minutes while active, and on selecting the last article. Automatic triggers have a one-minute cooldown and concurrent refreshes are coalesced. Temporary connection failures retry once; persistent failures appear in the menu and are retried on subsequent updates. There is no refresh button. It does not continuously collect while the app is closed. Publisher feeds and Telegram public previews expose finite recent windows, so old items can be missed during long absences or pauses. Telegram video-only posts are supported when exposed in public previews; other media-only posts and private channels are not supported. Private channel access and reliable historical backfill need an authenticated Telegram client integration. Public preview parsing may need updates if Telegram changes its HTML.
 
-Full-text extraction cannot guarantee access to paywalled, blocked or JavaScript-only content. A failure preserves original feed text and the source link. Full text is fetched when an RSS article is selected; unread items retain feed text until opened. Telegram posts retain message formatting and public preview photos. Existing RSS articles are enriched again when opened to restore formatting.
+Full-text extraction cannot guarantee access to paywalled, blocked or JavaScript-only content. A failure preserves original feed text and the source link. Full text and images are prepared during subscription updates; missing content is fetched when an article is selected. Telegram posts retain message formatting and public preview photos. Existing RSS articles are enriched again when opened to restore formatting.
 
 CloudKit sync is eventual. Story identity uses publisher URLs (excluding tracking parameters), so deleting and re-adding a subscription preserves saved stories and read state. Existing duplicates are consolidated during updates, and duplicate CloudKit arrivals are hidden in the queue until consolidation. CloudKit has no unique constraints, so concurrent imports can temporarily create duplicate records. Concurrent pause changes resolve through CloudKit synchronization. Reading position uses the most recently changed record; scroll offset within an article is not restored. Calendar-based pauses from tgRssBot are outside this initial version.
 
@@ -82,8 +82,20 @@ Settings includes separate text and background color pickers for the light and d
 
 The reader reuses one WebKit view across article switches and sets its native background before rendering, including dark appearance. The navigation bar uses a fixed inline layout, and the load-finished callback no longer resets an in-progress scroll. Queue ordering is cached between queue changes. SwiftData imports, duplicate consolidation, and article preparation saves run on a background model actor; the visible document remains an immutable snapshot.
 
-Images and direct HTTPS videos use a local disk cache capped at 512 MiB, with least-recently-used eviction and an 80 MiB per-file limit. Cached videos support byte-range requests for seeking. Uncached videos stream over HTTPS immediately while a background download warms the cache for reopening. Larger videos still stream but are not cached. Image loading is lazy and decoding is asynchronous. The OS may purge the cache; it is separate from the saved article library.
+Article text, images, and direct HTTPS videos share a local disk cache, with a configurable limit (512 MiB by default), least-recently-used eviction, and an 80 MiB per-media-file limit. Cached videos support byte-range requests for seeking. Uncached videos stream over HTTPS when playback starts, and that play event starts the background cache download. Opening an article does not prefetch video data. Larger videos still stream but are not cached. Image loading is lazy and decoding is asynchronous. The OS may purge the cache; it is separate from the saved article library.
 
 YouTube uses its official embedded player and WebKit-managed website storage, not a downloadable/offline copy of the video. YouTube embeds require connectivity and may be blocked by the video owner, region, or provider. Telegram signed media URLs may expire; refreshing a public channel obtains current media links for posts still in its preview window.
 
 Device validation: scroll during refresh and preparation with a large library; switch articles repeatedly in dark mode; start scrolling before images finish; verify inline YouTube/Telegram playback and seeking; reopen a cached image/video article offline. Use Instruments Hangs and Time Profiler to verify main-thread latency. CI builds alone do not establish smooth scrolling on a device.
+
+## Startup, settings, and cache lifecycle
+
+Library opening and SwiftData migration run away from the main actor. The reader receives explicit immutable queue snapshots from the library actor, instead of relying on another context’s query notifications to display the first article. Startup and article loads have visible progress/retry states. WebKit document loads and extraction have bounded recovery paths; WebKit/UI operations remain on the main actor as required by Apple, while network, parsing, cache I/O, and library work use background actors. Actors use Swift’s executor pool, not a dedicated thread per process.
+
+Settings has separate **Subscriptions**, **Colors**, and **Cache** tabs. The cache tab shows the measured bytes of the managed text/media cache, lets you choose a 64–8192 MiB limit, and applies eviction when the limit is lowered. Permanent library metadata and YouTube-managed website storage are separate from that figure. Old installations migrate saved bodies into the local cache; article URLs, titles, subscriptions, queue positions, and read history remain in the library even after eviction.
+
+Subscription updates store feed text, prepare full text where available, and cache images/posters. Opening an article reads cached text and images first and fetches missing data. Opening an article does not download video data: direct video caching begins on the first play event. YouTube continues to use its embedded player rather than an offline video file. Pull down at the top of an article (or scroll upward past the top on Mac) to fetch fresh text and images. A failed reload keeps the previously displayed article readable.
+
+The unread count fades while updates run, turns soft red if an update fails, and returns to its default color after success. Reduce Motion disables the repeating fade. There is no separate update-failure toolbar button.
+
+Validation now includes SwiftData runtime tests for startup snapshots and migration/eviction retaining article links, as well as content-cache serialization and eviction policy tests. Physical-device startup after upgrade, pull-to-refresh, playback-triggered caching, and scroll performance still require device validation.

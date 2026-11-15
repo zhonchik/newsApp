@@ -7,6 +7,8 @@ struct ArticleWebView {
     @Environment(\.colorScheme) private var colorScheme
     let article: ReaderDocument
     let hiddenText: String
+    let renderVersion: Int
+    let reload: () async -> Void
     let move: (Int) -> Void
 
     @AppStorage("lightText") private var lightText = "#202020"
@@ -45,13 +47,33 @@ struct ArticleWebView {
         """
         return (try? await MediaCache.shared.rewrite(html)) ?? html
     }
-    @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move) }
+    @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move, reload: reload) }
     @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
         let config = WKWebViewConfiguration()
         // The parent CSP blocks scripts; only the allowlisted YouTube frame runs JS.
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.websiteDataStore = .default()
         config.setURLSchemeHandler(MediaSchemeHandler(), forURLScheme: "reader-media")
+        // Isolated app script: publisher scripts remain blocked by the document CSP.
+        let playbackScript = """
+        document.addEventListener('play', function(event) {
+          if (event.target.tagName === 'VIDEO') {
+            window.webkit.messageHandlers.cacheVideo.postMessage(event.target.currentSrc || event.target.src);
+          }
+        }, true);
+        let pull = 0, lastWheel = 0;
+        document.addEventListener('wheel', function(event) {
+          if (Date.now() - lastWheel > 400) pull = 0;
+          lastWheel = Date.now();
+          if (window.scrollY <= 0 && event.deltaY < 0) {
+            pull -= event.deltaY;
+            if (pull > 160) { pull = 0; window.webkit.messageHandlers.readerRefresh.postMessage('refresh'); }
+          } else { pull = 0; }
+        }, {passive:true});
+        """
+        config.userContentController.addUserScript(WKUserScript(source: playbackScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        config.userContentController.add(coordinator, contentWorld: .defaultClient, name: "cacheVideo")
+        config.userContentController.add(coordinator, contentWorld: .defaultClient, name: "readerRefresh")
         #if os(iOS)
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = .all
@@ -61,6 +83,10 @@ struct ArticleWebView {
         applyBackground(webView)
         webView.move = move
         #if os(iOS)
+        webView.scrollView.alwaysBounceVertical = true
+        let refresh = UIRefreshControl()
+        refresh.addTarget(coordinator, action: #selector(Coordinator.pullToRefresh(_:)), for: .valueChanged)
+        webView.scrollView.refreshControl = refresh
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
@@ -72,20 +98,22 @@ struct ArticleWebView {
         return webView
     }
     @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
-        coordinator.move = move; webView.move = move
+        coordinator.move = move; coordinator.reload = reload; webView.move = move
         applyBackground(webView)
         let palette = ReaderPalette(lightText: lightText, lightBackground: lightBackground, darkText: darkText, darkBackground: darkBackground)
-        let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette)
+        let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette, version: renderVersion)
         guard coordinator.input != input else { return }
         coordinator.input = input
         coordinator.renderTask?.cancel()
+        webView.beginLoading()
         coordinator.renderTask = Task { @MainActor [weak webView, weak coordinator] in
             let html = await Task.detached(priority: .userInitiated) {
                 await Self.document(article: input.article, hiddenText: input.hiddenText, palette: input.palette)
             }.value
             guard !Task.isCancelled, let coordinator, coordinator.input == input else { return }
             // A stable HTTPS base supplies the Referer required by YouTube embeds.
-            webView?.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
+            coordinator.lastHTML = html; coordinator.recoveries = 0
+            if let webView { coordinator.load(html, in: webView) }
         }
     }
     @MainActor private func applyBackground(_ webView: ReaderWebView) {
@@ -105,13 +133,75 @@ struct ArticleWebView {
         let article: ReaderDocument
         let hiddenText: String
         let palette: ReaderPalette
+        let version: Int
     }
-    @MainActor class Coordinator: NSObject, WKNavigationDelegate {
+    @MainActor class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var move: (Int) -> Void
+        var reload: () async -> Void
+        var lastHTML = ""
+        var recoveries = 0
+        private var refreshing = false
+        private var loadTimeout: Task<Void, Never>?
+        private var activeNavigation: WKNavigation?
         var input: RenderInput?
         var renderTask: Task<Void, Never>?
-        deinit { renderTask?.cancel() }
-        init(move: @escaping (Int) -> Void) { self.move = move }
+        deinit { renderTask?.cancel(); loadTimeout?.cancel() }
+        init(move: @escaping (Int) -> Void, reload: @escaping () async -> Void) { self.move = move; self.reload = reload }
+        func load(_ html: String, in webView: ReaderWebView) {
+            activeNavigation = webView.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
+            loadTimeout?.cancel()
+            loadTimeout = Task { @MainActor [weak self, weak webView] in
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                guard let self, let webView else { return }
+                self.recover(webView)
+            }
+        }
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            guard navigation === activeNavigation else { return }
+            loadTimeout?.cancel()
+            (webView as? ReaderWebView)?.endLoading()
+        }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard navigation === activeNavigation else { return }
+            loadTimeout?.cancel()
+            (webView as? ReaderWebView)?.endLoading()
+        }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { recover(webView) }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            if navigation === activeNavigation, (error as NSError).code != NSURLErrorCancelled { recover(webView) }
+        }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            if navigation === activeNavigation, (error as NSError).code != NSURLErrorCancelled { recover(webView) }
+        }
+        private func recover(_ view: WKWebView) {
+            guard let view = view as? ReaderWebView else { return }
+            loadTimeout?.cancel()
+            if recoveries == 0, !lastHTML.isEmpty {
+                recoveries += 1
+                load(lastHTML, in: view)
+            } else {
+                view.endLoading()
+                // An actionable error instead of an indefinitely blank reader.
+                view.loadHTMLString("<html><meta name='color-scheme' content='light dark'><body><p>The reader could not display this article. Pull down to reload it, or switch articles and try again.</p></body></html>", baseURL: nil)
+            }
+        }
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.frameInfo.isMainFrame else { return }
+            if message.name == "cacheVideo", let raw = message.body as? String, let url = URL(string: raw), url.scheme == "https" {
+                Task { _ = try? await MediaCache.shared.entry(for: url) }
+            } else if message.name == "readerRefresh" { Task { await refresh() } }
+        }
+        private func refresh() async {
+            guard !refreshing else { return }
+            refreshing = true
+            await reload()
+            refreshing = false
+        }
+        #if os(iOS)
+        @objc func pullToRefresh(_ control: UIRefreshControl) {
+            Task { await refresh(); control.endRefreshing() }
+        }
+        #endif
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             // Allow provider navigation inside the embedded player only.
             if action.targetFrame?.isMainFrame == false { decisionHandler(.allow); return }
@@ -133,6 +223,28 @@ struct ArticleWebView {
 
 final class ReaderWebView: WKWebView {
     var move: ((Int) -> Void)?
+    #if os(iOS)
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    func beginLoading() {
+        if spinner.superview == nil {
+            addSubview(spinner); spinner.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([spinner.centerXAnchor.constraint(equalTo: centerXAnchor), spinner.centerYAnchor.constraint(equalTo: centerYAnchor)])
+        }
+        spinner.startAnimating()
+    }
+    func endLoading() { spinner.stopAnimating() }
+    #else
+    private let spinner = NSProgressIndicator()
+    func beginLoading() {
+        if spinner.superview == nil {
+            spinner.style = .spinning; spinner.isDisplayedWhenStopped = false
+            addSubview(spinner); spinner.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([spinner.centerXAnchor.constraint(equalTo: centerXAnchor), spinner.centerYAnchor.constraint(equalTo: centerYAnchor)])
+        }
+        spinner.startAnimation(nil)
+    }
+    func endLoading() { spinner.stopAnimation(nil) }
+    #endif
     #if os(macOS)
     override func swipe(with event: NSEvent) {
         if event.deltaX != 0 { move?(event.deltaX < 0 ? 1 : -1) }
