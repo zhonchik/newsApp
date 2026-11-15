@@ -171,7 +171,7 @@ final class MediaSchemeHandler: NSObject, WKURLSchemeHandler {
         let load = MediaLoad(urlSchemeTask)
         lock.lock(); loads[id] = load; lock.unlock()
         Task.detached(priority: .utility) { [self] in
-            defer { remove(id) }
+            defer { Task { @MainActor in self.remove(id) } }
             do {
                 guard let url = load.request.url, let remote = MediaRequest.remoteURL(url) else { throw URLError(.badURL) }
                 let entry = try await MediaCache.shared.entry(for: remote)
