@@ -7,6 +7,7 @@ import SwiftData
     @Published var selection = ""
     @Published var document: ReaderDocument?
     @Published var starting = true
+    @Published var pageVisible = false
     @Published var loadingArticle = false
     @Published var updating = false
     @Published var reloadingArticle = false
@@ -50,9 +51,12 @@ import SwiftData
         }
     }
     func pageDidDisplay() {
+        pageVisible = true
         firstPageDisplayed = true
         if !starting { beginBackgroundWork() }
     }
+    func pageFailed(_ message: String) { articleError = message }
+    func retryPage() { articleError = nil; renderVersion += 1 }
     private func beginBackgroundWork() {
         guard let worker, !backgroundStarted else { return }
         backgroundStarted = true

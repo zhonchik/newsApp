@@ -9,6 +9,7 @@ struct ArticleWebView {
     let hiddenText: String
     let renderVersion: Int
     let onDisplay: () -> Void
+    let onFailure: (String) -> Void
     let reload: () async -> Void
     let move: (Int) -> Void
 
@@ -25,7 +26,7 @@ struct ArticleWebView {
         let body = (try? ReaderContent.html(body: article.html.isEmpty ? fallback : article.html, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)) ?? fallback
         let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
         let html = """
-        <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <!doctype html><html data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: reader-media:; media-src https: reader-media:; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
         <style>
         :root { color-scheme: light dark; font: -apple-system-body; }
@@ -48,7 +49,7 @@ struct ArticleWebView {
         """
         return (try? await MediaCache.shared.rewrite(html)) ?? html
     }
-    @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move, reload: reload, onDisplay: onDisplay) }
+    @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move, reload: reload, onDisplay: onDisplay, onFailure: onFailure) }
     @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
         let config = WKWebViewConfiguration()
         // The parent CSP blocks scripts; only the allowlisted YouTube frame runs JS.
@@ -57,6 +58,9 @@ struct ArticleWebView {
         config.setURLSchemeHandler(MediaSchemeHandler(), forURLScheme: "reader-media")
         // Isolated app script: publisher scripts remain blocked by the document CSP.
         let playbackScript = """
+        requestAnimationFrame(function() { requestAnimationFrame(function() {
+          window.webkit.messageHandlers.readerReady.postMessage(document.documentElement.getAttribute('data-reader-key') || '');
+        }); });
         document.addEventListener('play', function(event) {
           if (event.target.tagName === 'VIDEO') {
             window.webkit.messageHandlers.cacheVideo.postMessage(event.target.currentSrc || event.target.src);
@@ -75,6 +79,7 @@ struct ArticleWebView {
         config.userContentController.addUserScript(WKUserScript(source: playbackScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         config.userContentController.add(coordinator, contentWorld: .defaultClient, name: "cacheVideo")
         config.userContentController.add(coordinator, contentWorld: .defaultClient, name: "readerRefresh")
+        config.userContentController.add(coordinator, contentWorld: .defaultClient, name: "readerReady")
         #if os(iOS)
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = .all
@@ -99,7 +104,7 @@ struct ArticleWebView {
         return webView
     }
     @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
-        coordinator.move = move; coordinator.reload = reload; coordinator.onDisplay = onDisplay; webView.move = move
+        coordinator.move = move; coordinator.reload = reload; coordinator.onDisplay = onDisplay; coordinator.onFailure = onFailure; webView.move = move
         applyBackground(webView)
         let palette = ReaderPalette(lightText: lightText, lightBackground: lightBackground, darkText: darkText, darkBackground: darkBackground)
         let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette, version: renderVersion)
@@ -140,6 +145,7 @@ struct ArticleWebView {
         var move: (Int) -> Void
         var reload: () async -> Void
         var onDisplay: () -> Void
+        var onFailure: (String) -> Void
         var lastHTML = ""
         var recoveries = 0
         private var refreshing = false
@@ -148,8 +154,8 @@ struct ArticleWebView {
         var input: RenderInput?
         var renderTask: Task<Void, Never>?
         deinit { renderTask?.cancel(); loadTimeout?.cancel() }
-        init(move: @escaping (Int) -> Void, reload: @escaping () async -> Void, onDisplay: @escaping () -> Void) {
-            self.move = move; self.reload = reload; self.onDisplay = onDisplay
+        init(move: @escaping (Int) -> Void, reload: @escaping () async -> Void, onDisplay: @escaping () -> Void, onFailure: @escaping (String) -> Void) {
+            self.move = move; self.reload = reload; self.onDisplay = onDisplay; self.onFailure = onFailure
         }
         func load(_ html: String, in webView: ReaderWebView) {
             activeNavigation = webView.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
@@ -160,16 +166,20 @@ struct ArticleWebView {
                 self.recover(webView)
             }
         }
-        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            guard navigation === activeNavigation else { return }
-            loadTimeout?.cancel()
-            (webView as? ReaderWebView)?.endLoading()
-            onDisplay()
-        }
+        // A navigation commit is too early: keep Preparing visible until the
+        // page's animation-frame callback confirms it has reached rendering.
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard navigation === activeNavigation else { return }
-            loadTimeout?.cancel()
-            (webView as? ReaderWebView)?.endLoading()
+            // Animation-frame callbacks can be throttled while the loading overlay
+            // covers WebKit. Confirm usable DOM/layout as a second readiness path.
+            webView.evaluateJavaScript("document.readyState === 'complete' && !!document.body && document.body.getBoundingClientRect().height > 0", in: nil, in: .defaultClient) { [weak self, weak webView] result in
+                guard let self, navigation === self.activeNavigation else { return }
+                if case .success(let value) = result, value as? Bool == true {
+                    self.loadTimeout?.cancel()
+                    (webView as? ReaderWebView)?.endLoading()
+                    self.onDisplay()
+                }
+            }
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { recover(webView) }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -186,13 +196,18 @@ struct ArticleWebView {
                 load(lastHTML, in: view)
             } else {
                 view.endLoading()
+                onFailure("The article could not be displayed. Please try again.")
                 // An actionable error instead of an indefinitely blank reader.
                 view.loadHTMLString("<html><meta name='color-scheme' content='light dark'><body><p>The reader could not display this article. Pull down to reload it, or switch articles and try again.</p></body></html>", baseURL: nil)
             }
         }
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame else { return }
-            if message.name == "cacheVideo", let raw = message.body as? String, let url = URL(string: raw), url.scheme == "https" {
+            if message.name == "readerReady", let key = message.body as? String, key == input?.article.key {
+                loadTimeout?.cancel()
+                (message.webView as? ReaderWebView)?.endLoading()
+                onDisplay()
+            } else if message.name == "cacheVideo", let raw = message.body as? String, let url = URL(string: raw), url.scheme == "https" {
                 Task { _ = try? await MediaCache.shared.entry(for: url) }
             } else if message.name == "readerRefresh" { Task { await refresh() } }
         }

@@ -3,6 +3,11 @@ import SwiftData
 
 struct ReaderView: View {
     @ObservedObject var library: LibraryContainer
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("lightText") private var lightText = "#202020"
+    @AppStorage("lightBackground") private var lightBackground = "#FFFFFF"
+    @AppStorage("darkText") private var darkText = "#EEEEEE"
+    @AppStorage("darkBackground") private var darkBackground = "#181818"
     @Environment(\.scenePhase) private var phase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var reader = ReaderState()
@@ -11,6 +16,8 @@ struct ReaderView: View {
     var body: some View {
         NavigationStack {
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay { preparationOverlay }
                 .toolbar { toolbar }
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -33,9 +40,40 @@ struct ReaderView: View {
         }
         .tint(Color(red: 0.14, green: 0.54, blue: 0.51))
     }
+    @ViewBuilder private var preparationOverlay: some View {
+        if !reader.pageVisible && (reader.starting || reader.loadingArticle || reader.current != nil || reader.document != nil || library.launchDocument != nil) {
+            VStack(spacing: 12) {
+                if let error = reader.articleError ?? reader.startupError ?? library.error {
+                    Text("Couldn't prepare the reader").font(.headline)
+                    Text(error).font(.callout)
+                    Button("Try again") {
+                        if reader.document != nil || library.launchDocument != nil { reader.retryPage() }
+                        else if reader.current != nil { Task { await reader.loadSelected() } }
+                        else { Task {
+                            if let container = library.container { await reader.start(container: container) }
+                            else { await library.open() }
+                        } }
+                    }
+                } else {
+                    ProgressView()
+                    Text("Preparing…").font(.headline)
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .foregroundStyle(themeColor(colorScheme == .dark ? darkText : lightText))
+            .tint(themeColor(colorScheme == .dark ? darkText : lightText))
+            .background(themeColor(colorScheme == .dark ? darkBackground : lightBackground))
+            .accessibilityElement(children: .contain)
+        }
+    }
+    private func themeColor(_ hex: String) -> Color {
+        let value = UInt32(hex.dropFirst(), radix: 16) ?? 0
+        return Color(red: Double((value >> 16) & 255) / 255, green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255)
+    }
     @ViewBuilder private var content: some View {
         if let document = reader.document ?? (reader.starting ? library.launchDocument : nil) {
-            ArticleWebView(article: document, hiddenText: reader.current?.hiddenText ?? document.hiddenText, renderVersion: reader.renderVersion, onDisplay: reader.pageDidDisplay, reload: { await reader.reloadArticle() }, move: reader.move)
+            ArticleWebView(article: document, hiddenText: reader.current?.hiddenText ?? document.hiddenText, renderVersion: reader.renderVersion, onDisplay: reader.pageDidDisplay, onFailure: reader.pageFailed, reload: { await reader.reloadArticle() }, move: reader.move)
                 .accessibilityAction(named: "Next article") { reader.move(1) }
                 .accessibilityAction(named: "Previous article") { reader.move(-1) }
                 .overlay {
