@@ -3,13 +3,17 @@ import SwiftData
 
 @MainActor final class LibraryContainer: ObservableObject {
     @Published var container: ModelContainer?
+    @Published var launchDocument: ReaderDocument?
     @Published var error: String?
     private var opening = false
+    init() { Task { await open() } }
     func open() async {
         guard container == nil, !opening else { return }
         opening = true; error = nil
         defer { opening = false }
         do {
+            // This read needs no SwiftData container or migration.
+            launchDocument = await MediaCache.shared.launchDocument()
             container = try await Task.detached(priority: .userInitiated) {
                 let schema = Schema([Subscription.self, Article.self, ReadingPosition.self])
                 #if LOCAL_ONLY
@@ -27,16 +31,8 @@ import SwiftData
     @StateObject private var library = LibraryContainer()
     var body: some Scene {
         WindowGroup {
-            Group {
-                if let container = library.container { ReaderView().modelContainer(container) }
-                else if let error = library.error {
-                    VStack(spacing: 12) {
-                        Text("Couldn't open the library").font(.headline)
-                        Text(error)
-                        Button("Try again") { Task { await library.open() } }
-                    }.padding()
-                } else { ProgressView("Opening library…").padding() }
-            }.task { await library.open() }
+            // Keep the same reader/WebKit view when the database becomes available.
+            ReaderView(library: library)
         }
         #if os(macOS)
         .defaultSize(width: 1000, height: 800)

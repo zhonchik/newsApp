@@ -60,7 +60,7 @@ struct RemoteArticle: Decodable, Sendable {
 }
 
 /// Only immutable values cross the library actor boundary.
-struct ArticleLink: Sendable, Equatable, Identifiable {
+struct ArticleLink: Codable, Sendable, Equatable, Identifiable {
     var id: String { key }
     let key: String
     let title: String
@@ -83,6 +83,7 @@ struct LibrarySnapshot: Sendable {
     let savedKey: String
 }
 struct ReaderDocument: Sendable, Equatable {
+    let hiddenText: String
     let key: String
     let title: String
     let source: String
@@ -92,6 +93,7 @@ struct ReaderDocument: Sendable, Equatable {
     let feedHTML: String
     let published: Date
     init(_ link: ArticleLink, content: CachedArticle) {
+        hiddenText = link.hiddenText
         key = link.key; title = link.title; source = link.source; url = link.url
         text = content.text; html = content.html; feedHTML = content.feedHTML; published = link.published
     }

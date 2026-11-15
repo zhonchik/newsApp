@@ -22,6 +22,27 @@ final class LibraryCacheTests: XCTestCase {
         let updated = try await worker.snapshot()
         XCTAssertTrue(updated.articles[0].read)
     }
+    @MainActor func testUpgradeCanDisplayLegacySavedBodyBeforeMigration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = MediaCache(directory: root, limitBytes: 4096)
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let subscription = Subscription(name: "Feed", address: "https://example.com/feed", kind: "rss")
+        context.insert(subscription)
+        let article = Article(item: item("upgrade"), subscription: subscription)
+        context.insert(article)
+        context.insert(ReadingPosition(articleKey: article.key))
+        try context.save()
+        let worker = await Task.detached { LibraryWorker(modelContainer: container) }.value
+        let launch = try await worker.launchDocument(cache: cache)
+        XCTAssertEqual(launch?.key, article.key)
+        XCTAssertEqual(launch?.text, "Article text")
+        let fresh = ModelContext(container)
+        XCTAssertFalse(try XCTUnwrap(fresh.fetch(FetchDescriptor<Article>()).first).html.isEmpty)
+        let size = try await cache.usage()
+        XCTAssertEqual(size, 0, "Showing the saved article must not require a cache migration")
+    }
     @MainActor func testMigrationAndEvictionKeepArticleLinksAndReadState() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

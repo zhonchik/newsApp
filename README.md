@@ -99,3 +99,5 @@ Subscription updates store feed text, prepare full text where available, and cac
 The unread count fades while updates run, turns soft red if an update fails, and returns to its default color after success. Reduce Motion disables the repeating fade. There is no separate update-failure toolbar button.
 
 Validation now includes SwiftData runtime tests for startup snapshots and migration/eviction retaining article links, as well as content-cache serialization and eviction policy tests. Physical-device startup after upgrade, pull-to-refresh, playback-triggered caching, and scroll performance still require device validation.
+
+Startup first reads the last article’s cache without opening the database. On upgrades from older versions, a single-record database read can display the legacy saved body before migration. The reader view stays mounted as the database opens, and maintenance/refresh is deferred until its first page commits. A successful update with zero new articles is explicitly successful; optional image/full-text prefetch failures no longer color the unread count red. Red indicates a feed fetch/import failure or a failed explicit article reload.

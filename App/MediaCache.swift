@@ -95,6 +95,16 @@ actor MediaCache {
         let name = SHA256.hash(data: Data(("article:" + key).utf8)).map { String(format: "%02x", $0) }.joined()
         return directory.appendingPathComponent(name)
     }
+    private static let lastArticleKey = "lastCachedArticleLink"
+    func remember(_ link: ArticleLink) throws {
+        UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: Self.lastArticleKey)
+    }
+    func launchDocument() -> ReaderDocument? {
+        guard let data = UserDefaults.standard.data(forKey: Self.lastArticleKey),
+              let link = try? JSONDecoder().decode(ArticleLink.self, from: data),
+              let content = article(link.key) else { return nil }
+        return ReaderDocument(link, content: content)
+    }
     func article(_ key: String) -> CachedArticle? {
         let file = articleFile(key)
         guard let data = try? Data(contentsOf: file), let article = try? JSONDecoder().decode(CachedArticle.self, from: data) else { return nil }

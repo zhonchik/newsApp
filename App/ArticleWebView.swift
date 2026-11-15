@@ -8,6 +8,7 @@ struct ArticleWebView {
     let article: ReaderDocument
     let hiddenText: String
     let renderVersion: Int
+    let onDisplay: () -> Void
     let reload: () async -> Void
     let move: (Int) -> Void
 
@@ -47,7 +48,7 @@ struct ArticleWebView {
         """
         return (try? await MediaCache.shared.rewrite(html)) ?? html
     }
-    @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move, reload: reload) }
+    @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move, reload: reload, onDisplay: onDisplay) }
     @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
         let config = WKWebViewConfiguration()
         // The parent CSP blocks scripts; only the allowlisted YouTube frame runs JS.
@@ -98,7 +99,7 @@ struct ArticleWebView {
         return webView
     }
     @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
-        coordinator.move = move; coordinator.reload = reload; webView.move = move
+        coordinator.move = move; coordinator.reload = reload; coordinator.onDisplay = onDisplay; webView.move = move
         applyBackground(webView)
         let palette = ReaderPalette(lightText: lightText, lightBackground: lightBackground, darkText: darkText, darkBackground: darkBackground)
         let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette, version: renderVersion)
@@ -138,6 +139,7 @@ struct ArticleWebView {
     @MainActor class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var move: (Int) -> Void
         var reload: () async -> Void
+        var onDisplay: () -> Void
         var lastHTML = ""
         var recoveries = 0
         private var refreshing = false
@@ -146,7 +148,9 @@ struct ArticleWebView {
         var input: RenderInput?
         var renderTask: Task<Void, Never>?
         deinit { renderTask?.cancel(); loadTimeout?.cancel() }
-        init(move: @escaping (Int) -> Void, reload: @escaping () async -> Void) { self.move = move; self.reload = reload }
+        init(move: @escaping (Int) -> Void, reload: @escaping () async -> Void, onDisplay: @escaping () -> Void) {
+            self.move = move; self.reload = reload; self.onDisplay = onDisplay
+        }
         func load(_ html: String, in webView: ReaderWebView) {
             activeNavigation = webView.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
             loadTimeout?.cancel()
@@ -160,6 +164,7 @@ struct ArticleWebView {
             guard navigation === activeNavigation else { return }
             loadTimeout?.cancel()
             (webView as? ReaderWebView)?.endLoading()
+            onDisplay()
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard navigation === activeNavigation else { return }

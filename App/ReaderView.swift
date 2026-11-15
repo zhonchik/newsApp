@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct ReaderView: View {
-    @Environment(\.modelContext) private var context
+    @ObservedObject var library: LibraryContainer
     @Environment(\.scenePhase) private var phase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var reader = ReaderState()
@@ -16,8 +16,12 @@ struct ReaderView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.visible, for: .navigationBar)
                 #endif
-                .sheet(isPresented: $showSettings, onDismiss: { Task { await reader.settingsClosed() } }) { SettingsView() }
-                .task { await reader.start(container: context.container) }
+                .sheet(isPresented: $showSettings, onDismiss: { Task { await reader.settingsClosed() } }) {
+                    if let container = library.container { SettingsView().modelContainer(container) }
+                }
+                .task(id: library.container != nil) {
+                    if let container = library.container { await reader.start(container: container) }
+                }
                 .task(id: reader.selection) { await reader.loadSelected() }
                 .task {
                     while !Task.isCancelled {
@@ -30,12 +34,12 @@ struct ReaderView: View {
         .tint(Color(red: 0.14, green: 0.54, blue: 0.51))
     }
     @ViewBuilder private var content: some View {
-        if let document = reader.document {
-            ArticleWebView(article: document, hiddenText: reader.current?.hiddenText ?? "", renderVersion: reader.renderVersion, reload: { await reader.reloadArticle() }, move: reader.move)
+        if let document = reader.document ?? (reader.starting ? library.launchDocument : nil) {
+            ArticleWebView(article: document, hiddenText: reader.current?.hiddenText ?? document.hiddenText, renderVersion: reader.renderVersion, onDisplay: reader.pageDidDisplay, reload: { await reader.reloadArticle() }, move: reader.move)
                 .accessibilityAction(named: "Next article") { reader.move(1) }
                 .accessibilityAction(named: "Previous article") { reader.move(-1) }
                 .overlay {
-                    if document.key != reader.selection {
+                    if !reader.selection.isEmpty && document.key != reader.selection {
                         VStack(spacing: 12) {
                             if let error = reader.articleError {
                                 Text(error)
@@ -44,12 +48,15 @@ struct ReaderView: View {
                         }.padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     }
                 }
-        } else if let error = reader.articleError ?? reader.startupError {
+        } else if let error = reader.articleError ?? reader.startupError ?? library.error {
             ContentUnavailableView {
                 Label("Couldn't load the article", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
             } description: { Text(error) } actions: {
                 Button("Try again") { Task {
-                    if reader.current == nil { await reader.start(container: context.container) }
+                    if reader.current == nil {
+                        if let container = library.container { await reader.start(container: container) }
+                        else { await library.open() }
+                    }
                     else { await reader.loadSelected() }
                 } }
             }
@@ -86,6 +93,9 @@ struct ReaderView: View {
             } label: { Label("Go to first unread", systemImage: "forward.end.fill") }
             .disabled(reader.unreadCount == 0)
         }
-        ToolbarItem { Button { showSettings = true } label: { Label("Settings", systemImage: "slider.horizontal.3") } }
+        ToolbarItem {
+            Button { showSettings = true } label: { Label("Settings", systemImage: "slider.horizontal.3") }
+                .disabled(library.container == nil)
+        }
     }
 }

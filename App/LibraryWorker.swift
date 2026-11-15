@@ -49,6 +49,24 @@ import SwiftData
         context.autosaveEnabled = false
         return context
     }
+    /// Read only the saved article on upgrade, before queue scans or migration.
+    func launchDocument(cache: MediaCache = .shared) async throws -> ReaderDocument? {
+        let context = freshContext()
+        var positions = FetchDescriptor<ReadingPosition>(sortBy: [SortDescriptor(\.changed, order: .reverse)])
+        positions.fetchLimit = 1
+        let key = try context.fetch(positions).first?.articleKey ?? ""
+        var descriptor = FetchDescriptor<Article>(predicate: #Predicate { $0.key == key })
+        descriptor.fetchLimit = 1
+        guard let article = try context.fetch(descriptor).first else { return nil }
+        let subscriptionID = article.subscriptionID
+        let subscription = try context.fetch(FetchDescriptor<Subscription>(predicate: #Predicate { $0.id == subscriptionID })).first
+        let link = ArticleLink(article, hiddenText: subscription?.hiddenText ?? "")
+        if let cached = await cache.article(link.key) { return ReaderDocument(link, content: cached) }
+        if !article.text.isEmpty || !article.html.isEmpty || !article.feedHTML.isEmpty {
+            return ReaderDocument(link, content: CachedArticle(text: article.text, html: article.html, feedHTML: article.feedHTML, revision: article.contentRevision))
+        }
+        return nil
+    }
     func snapshot() throws -> LibrarySnapshot {
         let context = freshContext()
         let subscriptions = try context.fetch(FetchDescriptor<Subscription>(sortBy: [SortDescriptor(\.created)]))
