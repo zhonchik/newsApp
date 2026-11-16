@@ -35,10 +35,11 @@ struct ArticleWebView {
         body { margin:0 auto; padding:0 24px 24px; max-width:680px; overflow-wrap:anywhere; }
         article { font-family: Georgia, serif; font-size:1.15em; line-height:1.7; }
         h1 { font-family: Georgia, serif; font-size:1.4em; line-height:1.3; }
-        h2,h3,h4 { line-height:1.3; } img { max-width:100%; height:auto; border-radius:6px; }
+        h2,h3,h4 { line-height:1.3; }
+        /* Fill the reader column even when publisher HTML supplies small dimensions. */
+        img { display:block; width:100%; max-width:100%; height:auto; border-radius:6px; }
         video, iframe { display:block; width:100%; height:auto; aspect-ratio:16/9; border:0; background:#181818; object-fit:contain; }
         img:not([width][height]) { width:100%; height:auto; aspect-ratio:16/9; object-fit:contain; }
-        figure img { width:100%; }
         figure { margin:1.5em 0; } figcaption,header,footer { font: -apple-system-caption1; color: GrayText; }
         a { color: #298c81; } blockquote { border-left:3px solid #298c81; margin:1em 0; padding-left:1em; }
         pre { overflow-x:auto; padding:12px; background:light-dark(#f3f3f3,#252525); } table { display:block; overflow-x:auto; border-collapse:collapse; }
