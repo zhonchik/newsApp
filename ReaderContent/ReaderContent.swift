@@ -10,11 +10,9 @@ public enum ReaderContent {
         try ContentRules.clean(document, url: baseURL, hiddenText: hiddenText)
         var bodyImages = Set<String>()
         for image in try document.select("img[src]") {
-            let absolute = try image.absUrl("src")
-            if !absolute.isEmpty {
-                guard bodyImages.insert(ArticleIdentity.imageKey(absolute)).inserted else { try image.remove(); continue }
-                try image.attr("src", absolute)
-            }
+            guard let absolute = MediaURL.resolve(try image.attr("src"), baseURL: baseURL),
+                  bodyImages.insert(ArticleIdentity.imageKey(absolute)).inserted else { try image.remove(); continue }
+            try image.attr("src", absolute)
         }
         let extractedPaths = Set(try document.select("img[src]").compactMap { image in
             ArticleIdentity.imageKey(try image.absUrl("src"))
@@ -25,8 +23,7 @@ public enum ReaderContent {
             var seen = Set<String>()
             var photos = ""
             for image in try fallback.select("img[src]") {
-                let absolute = try image.absUrl("src")
-                guard let url = URL(string: absolute), url.scheme == "https", !extractedPaths.contains(ArticleIdentity.imageKey(absolute)), seen.insert(ArticleIdentity.imageKey(absolute)).inserted else { continue }
+                guard let absolute = MediaURL.resolve(try image.attr("src"), baseURL: baseURL), !extractedPaths.contains(ArticleIdentity.imageKey(absolute)), seen.insert(ArticleIdentity.imageKey(absolute)).inserted else { continue }
                 try image.attr("src", absolute)
                 photos += try image.outerHtml()
             }

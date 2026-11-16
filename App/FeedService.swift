@@ -46,8 +46,17 @@ actor FeedService {
         return try FeedParser.parse(data)
     }
     func articleText(url: String) async throws -> String {
-        let data = try await fetch(url)
+        let telegram = ContentRules.isTelegram(url)
+        let data = try await fetch(telegram ? url + "?embed=1" : url)
         let page = String(decoding: data, as: UTF8.self)
+        if telegram {
+            let document = try SwiftSoup.parse(page, url)
+            guard let post = try document.select(".tgme_widget_message").first() else { throw URLError(.cannotParseResponse) }
+            let message = try TelegramContent.message(in: post)
+            let html = message.html + (try Self.telegramImages(post)) + (try VideoPreview.telegram(post, url: url))
+            guard !html.isEmpty else { throw URLError(.cannotParseResponse) }
+            return html
+        }
         if let body = try ContentRules.articleBody(page: page, url: url) { return body }
         guard let resource = Bundle.main.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
         let library = try String(contentsOf: resource, encoding: .utf8)
@@ -122,26 +131,43 @@ final class FeedParser: NSObject, XMLParserDelegate {
 }
 
 @MainActor final class ArticleExtractor: NSObject, WKNavigationDelegate {
-    private var webView: WKWebView!
+    private var webView: WKWebView?
     private var continuation: CheckedContinuation<String, Error>?
+    private var timeout: Task<Void, Never>?
     private var script = ""
     func extract(script: String, url: String) async throws -> String {
         self.script = script
         let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
-        webView = WKWebView(frame: .zero, configuration: configuration); webView.navigationDelegate = self
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            // Only this empty document is loaded. Publisher HTML is parsed as an inert DOM;
-            // its scripts, images and trackers are never loaded into the web view.
-            webView.loadHTMLString("<html><body></body></html>", baseURL: URL(string: url))
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        webView = view; view.navigationDelegate = self
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+                timeout = Task { @MainActor [weak self] in
+                    do { try await Task.sleep(for: .seconds(20)) } catch { return }
+                    self?.finish(.failure(URLError(.timedOut)))
+                }
+                view.loadHTMLString("<html><body></body></html>", baseURL: URL(string: url))
+            }
+        } onCancel: {
+            Task { @MainActor in self.finish(.failure(CancellationError())) }
         }
+    }
+    private func finish(_ result: Result<String, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timeout?.cancel(); timeout = nil
+        webView?.stopLoading(); webView?.navigationDelegate = nil; webView = nil
+        continuation.resume(with: result)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         webView.evaluateJavaScript(script) { result, error in
-            if let error { self.continuation?.resume(throwing: error) }
-            else { self.continuation?.resume(returning: (result as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) }
-            self.continuation = nil
+            if let error { self.finish(.failure(error)) }
+            else { self.finish(.success((result as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines))) }
         }
     }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { continuation?.resume(throwing: error); continuation = nil }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { finish(.failure(URLError(.cannotLoadFromNetwork))) }
 }

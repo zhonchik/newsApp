@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import ReaderContent
+#endif
 import Foundation
 import SwiftData
 
@@ -56,8 +59,31 @@ struct RemoteArticle: Decodable, Sendable {
     var html: String = ""
 }
 
-/// Immutable presentation prevents background imports from reloading an open page.
+/// Only immutable values cross the library actor boundary.
+struct ArticleLink: Codable, Sendable, Equatable, Identifiable {
+    var id: String { key }
+    let key: String
+    let title: String
+    let source: String
+    let url: String
+    let published: Date
+    let read: Bool
+    let hiddenText: String
+    init(_ article: Article, hiddenText: String) {
+        key = article.key; title = article.title; source = article.source; url = article.url
+        published = article.published; read = article.read; self.hiddenText = hiddenText
+    }
+}
+struct SubscriptionInfo: Sendable {
+    let id: UUID; let name: String; let address: String; let kind: String
+}
+struct LibrarySnapshot: Sendable {
+    let articles: [ArticleLink]
+    let subscriptions: [SubscriptionInfo]
+    let savedKey: String
+}
 struct ReaderDocument: Sendable, Equatable {
+    let hiddenText: String
     let key: String
     let title: String
     let source: String
@@ -66,8 +92,9 @@ struct ReaderDocument: Sendable, Equatable {
     let html: String
     let feedHTML: String
     let published: Date
-    init(_ article: Article) {
-        key = article.key; title = article.title; source = article.source; url = article.url
-        text = article.text; html = article.html; feedHTML = article.feedHTML; published = article.published
+    init(_ link: ArticleLink, content: CachedArticle) {
+        hiddenText = link.hiddenText
+        key = link.key; title = link.title; source = link.source; url = link.url
+        text = content.text; html = content.html; feedHTML = content.feedHTML; published = link.published
     }
 }

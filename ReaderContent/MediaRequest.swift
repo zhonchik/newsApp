@@ -2,14 +2,15 @@ import Foundation
 
 public enum MediaRequest {
     public static func cachedURL(_ raw: String) -> String? {
-        guard var parts = URLComponents(string: raw), parts.scheme == "https", parts.host != nil else { return nil }
+        guard let normalized = MediaURL.resolve(raw), var parts = URLComponents(string: normalized) else { return nil }
         parts.scheme = "reader-media"
         return parts.string
     }
     public static func remoteURL(_ url: URL) -> URL? {
         guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.scheme == "reader-media", parts.host != nil else { return nil }
         parts.scheme = "https"
-        return parts.url
+        guard let raw = parts.string, let normalized = MediaURL.resolve(raw) else { return nil }
+        return URL(string: normalized)
     }
     /// A single HTTP byte range, including suffix and open-ended requests.
     public static func range(_ header: String?, size: Int) -> Range<Int>? {

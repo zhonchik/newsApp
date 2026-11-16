@@ -1,0 +1,38 @@
+import XCTest
+@testable import ReaderContent
+
+final class MediaURLTests: XCTestCase {
+    private let path = "/gallery/2026/other/mercedes/M652311_Mercedes_AMG_PETRONAS_F1_Team_Celebrates_World_Championships_at_Brackley_and_Brixworth.jpg"
+    private var correct: String { "https://c.f1news.ru" + path }
+    private var malformed: String { "https://c.f1news.ru" + correct }
+    func testReportedFeedURLRepairsToOriginalImageAndIsIdempotent() {
+        XCTAssertEqual(MediaURL.resolve(malformed), correct)
+        XCTAssertEqual(MediaURL.resolve(correct), correct)
+        XCTAssertEqual(MediaURL.resolve("  " + malformed + "\n"), correct)
+    }
+    func testCachedHTMLAndFeedFallbackAreRepairedAndDeduplicated() throws {
+        let html = try ReaderContent.html(body: "<p>Story</p><img src='\(malformed)'>", feed: "<img src='\(correct)'>", baseURL: "https://www.f1news.ru/news/story")
+        XCTAssertTrue(html.contains(correct))
+        XCTAssertFalse(html.contains("ruhttps"))
+        XCTAssertEqual(html.components(separatedBy: "<img").count - 1, 1)
+        let fallback = try ReaderContent.html(body: "<p>Story</p>", feed: "<img src='\(malformed)'>", baseURL: "https://www.f1news.ru/news/story")
+        XCTAssertTrue(fallback.contains(correct))
+        XCTAssertFalse(fallback.contains("ruhttps"))
+    }
+    func testCacheSchemeUsesRepairedRemoteURL() throws {
+        let cached = try XCTUnwrap(MediaRequest.cachedURL(malformed))
+        XCTAssertEqual(MediaRequest.remoteURL(try XCTUnwrap(URL(string: cached)))?.absoluteString, correct)
+    }
+    func testRelativeImagesAndLegitimateNestedURLsArePreserved() {
+        XCTAssertEqual(MediaURL.resolve("//cdn.example.com/image.jpg", baseURL: "https://example.com/story"), "https://cdn.example.com/image.jpg")
+        XCTAssertEqual(MediaURL.resolve("/image.jpg", baseURL: "https://example.com/story"), "https://example.com/image.jpg")
+        let proxy = "https://cdn.example.com/proxy/https://origin.example.com/image.jpg?next=https://other.example.com"
+        XCTAssertEqual(MediaURL.resolve(proxy), proxy)
+    }
+    func testDoesNotGuessOtherConcatenatedOriginsOrAllowUnsafeSchemes() {
+        XCTAssertNil(MediaURL.resolve("https://other.examplehttps://cdn.example.com/image.jpg"))
+        XCTAssertNil(MediaURL.resolve("javascript:alert(1)"))
+        XCTAssertNil(MediaURL.resolve("file:///tmp/image.jpg"))
+        XCTAssertNil(MediaURL.resolve("http://c.f1news.ru/image.jpg"))
+    }
+}
