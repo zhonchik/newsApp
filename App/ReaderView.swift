@@ -18,6 +18,11 @@ struct ReaderView: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay { preparationOverlay }
+                .background {
+                    FirstFrameGate { Task { await library.open() } }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
                 .toolbar { toolbar }
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)

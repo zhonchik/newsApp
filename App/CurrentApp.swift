@@ -6,7 +6,6 @@ import SwiftData
     @Published var launchDocument: ReaderDocument?
     @Published var error: String?
     private var opening = false
-    init() { Task { await open() } }
     func open() async {
         guard container == nil, !opening else { return }
         opening = true; error = nil
