@@ -39,7 +39,8 @@ struct ArticleWebView {
         /* Fill the reader column even when publisher HTML supplies small dimensions. */
         img { display:block; width:100%; max-width:100%; height:auto; border-radius:6px; }
         video, iframe { display:block; width:100%; height:auto; aspect-ratio:16/9; border:0; background:#181818; object-fit:contain; }
-        img:not([width][height]) { width:100%; height:auto; aspect-ratio:16/9; object-fit:contain; }
+        /* Reserve space while loading, then use the photo’s intrinsic proportions. */
+        img:not([width][height]) { aspect-ratio:auto 16/9; }
         figure { margin:1.5em 0; } figcaption,header,footer { font: -apple-system-caption1; color: GrayText; }
         a { color: #298c81; } blockquote { border-left:3px solid #298c81; margin:1em 0; padding-left:1em; }
         pre { overflow-x:auto; padding:12px; background:light-dark(#f3f3f3,#252525); } table { display:block; overflow-x:auto; border-collapse:collapse; }
