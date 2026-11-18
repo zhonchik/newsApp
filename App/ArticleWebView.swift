@@ -38,6 +38,7 @@ struct ArticleWebView {
         h2,h3,h4 { line-height:1.3; }
         /* Fill the reader column even when publisher HTML supplies small dimensions. */
         img { display:block; width:100%; max-width:100%; height:auto; border-radius:6px; }
+        img[data-reader-original] { width:auto; }
         video, iframe { display:block; width:100%; height:auto; aspect-ratio:16/9; border:0; background:#181818; object-fit:contain; }
         /* Reserve space while loading, then use the photo’s intrinsic proportions. */
         img:not([width][height]) { aspect-ratio:auto 16/9; }

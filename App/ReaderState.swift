@@ -139,7 +139,7 @@ import SwiftData
                 guard !Task.isCancelled else { return }
                 do {
                     let content = try await preparation.prepare(link)
-                    try await MediaCache.shared.prefetchImages(content.html + content.feedHTML, baseURL: link.url)
+                    try await MediaCache.shared.prefetchImages(content.html, feed: content.feedHTML, baseURL: link.url)
                 } catch { /* Missing media is retried when selected or refreshed. */ }
             }
         }
@@ -153,7 +153,7 @@ import SwiftData
         do {
             let content = try await preparation.prepare(link, force: true)
             var imageError: Error?
-            do { try await MediaCache.shared.prefetchImages(content.html + content.feedHTML, baseURL: link.url, force: true) }
+            do { try await MediaCache.shared.prefetchImages(content.html, feed: content.feedHTML, baseURL: link.url, force: true) }
             catch { imageError = error }
             guard selection == key, !Task.isCancelled else { return }
             document = ReaderDocument(link, content: content)

@@ -8,31 +8,39 @@ public enum ReaderContent {
         let previews = try VideoPreview.youtube(in: body + feed, baseURL: baseURL)
         let document = try SwiftSoup.parse(body, baseURL)
         try ContentRules.clean(document, url: baseURL, hiddenText: hiddenText)
-        var bodyImages = Set<String>()
+        let fallback = try SwiftSoup.parse(feed, baseURL)
+        try ContentRules.clean(fallback, url: baseURL, hiddenText: hiddenText)
+        let feedImages = try fallback.select("img[src]").compactMap { image -> (Element, String)? in
+            guard let source = MediaURL.resolve(try image.attr("src"), baseURL: baseURL) else { return nil }
+            return (image, source)
+        }
+        let feedSources = feedImages.map { $0.1 }
+        var seen = Set<String>()
         for image in try document.select("img[src]") {
-            guard let absolute = MediaURL.resolve(try image.attr("src"), baseURL: baseURL),
-                  bodyImages.insert(ArticleIdentity.imageKey(absolute)).inserted else { try image.remove(); continue }
-            try image.attr("src", absolute)
-        }
-        let extractedPaths = Set(try document.select("img[src]").compactMap { image in
-            ArticleIdentity.imageKey(try image.absUrl("src"))
-        })
-        do {
-            let fallback = try SwiftSoup.parse(feed, baseURL)
-            try ContentRules.clean(fallback, url: baseURL, hiddenText: hiddenText)
-            var seen = Set<String>()
-            var photos = ""
-            for image in try fallback.select("img[src]") {
-                guard let absolute = MediaURL.resolve(try image.attr("src"), baseURL: baseURL), !extractedPaths.contains(ArticleIdentity.imageKey(absolute)), seen.insert(ArticleIdentity.imageKey(absolute)).inserted else { continue }
-                try image.attr("src", absolute)
-                photos += try image.outerHtml()
+            guard let source = MediaURL.resolve(try image.attr("src"), baseURL: baseURL) else {
+                try image.remove()
+                continue
             }
-            try document.body()?.prepend(photos)
+            let original = MediaURL.originalImage(for: source, in: feedSources)
+            let displaySource = original ?? source
+            guard seen.insert(ArticleIdentity.imageKey(displaySource)).inserted else {
+                try image.remove()
+                continue
+            }
+            try image.attr("src", displaySource)
+            if original != nil { try image.attr("data-reader-original", "") }
         }
+        var photos = ""
+        for (image, source) in feedImages where seen.insert(ArticleIdentity.imageKey(source)).inserted {
+            try image.attr("src", source)
+            photos += try image.outerHtml()
+        }
+        try document.body()?.prepend(photos)
         // Publisher iframes/scripts are removed. Only our validated YouTube embeds
         // are appended after cleaning, and only HTTPS video sources survive.
         let whitelist = try Whitelist.relaxed()
         try whitelist.addTags("video", "source")
+        try whitelist.addAttributes("img", "data-reader-original")
         try whitelist.addAttributes("video", "src", "poster", "controls", "playsinline", "preload", "width", "height")
         try whitelist.addAttributes("source", "src", "type")
         try whitelist.addProtocols("video", "src", "https")
