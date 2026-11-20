@@ -22,7 +22,7 @@ import SwiftData
     private let service = FeedService()
     private var lastRefresh = Date.distantPast
     private var opening = false
-    private var firstPageDisplayed = false
+    private var displayedKey: String?
     private var backgroundStarted = false
     private var maintenance: Task<Void, Never>?
     private var cacheWarmup: Task<Void, Never>?
@@ -44,16 +44,16 @@ import SwiftData
             try await reloadSnapshot()
             starting = false
             if let current, document?.key == current.key { try? await MediaCache.shared.remember(current) }
-            if firstPageDisplayed || current == nil || articleError != nil { beginBackgroundWork() }
+            if displayedKey == selection || current == nil || articleError != nil { beginBackgroundWork() }
         } catch {
             startupError = error.localizedDescription
             if articles.isEmpty { worker = nil }
         }
     }
-    func pageDidDisplay() {
+    func pageDidDisplay(_ key: String) {
         pageVisible = true
-        firstPageDisplayed = true
-        if !starting { beginBackgroundWork() }
+        displayedKey = key
+        if !starting && key == selection { beginBackgroundWork() }
     }
     func pageFailed(_ message: String) {
         articleError = message

@@ -41,18 +41,24 @@ import os
             do {
                 let worker = try await LibraryContainer.shared.worker()
                 try Task.checkCancellation()
+                var succeeded = true
                 if task.identifier == maintenanceID {
                     try await worker.migrateContent()
                 } else {
                     let service = FeedService()
                     for feed in try await worker.feedSubscriptions() {
                         try Task.checkCancellation()
-                        let items = try await service.itemsWithRetry(address: feed.address, kind: feed.kind)
-                        try Task.checkCancellation()
-                        _ = try await worker.importItems(items, subscriptionID: feed.id)
+                        do {
+                            let items = try await service.itemsWithRetry(address: feed.address, kind: feed.kind)
+                            try Task.checkCancellation()
+                            _ = try await worker.importItems(items, subscriptionID: feed.id)
+                        } catch {
+                            try Task.checkCancellation()
+                            succeeded = false
+                        }
                     }
                 }
-                task.setTaskCompleted(success: !Task.isCancelled)
+                task.setTaskCompleted(success: succeeded && !Task.isCancelled)
             } catch { task.setTaskCompleted(success: false) }
         }
         task.expirationHandler = { work.cancel() }

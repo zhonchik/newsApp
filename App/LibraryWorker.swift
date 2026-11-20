@@ -166,6 +166,7 @@ import SwiftData
         }
         try context.save()
         for (link, item) in result {
+            try Task.checkCancellation()
             let cached = await cache.article(link.key)
             if cached?.feedHTML != item.html {
                 let revision = subscription.kind == "telegram" ? ContentRules.revision : 0

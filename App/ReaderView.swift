@@ -58,20 +58,21 @@ struct ReaderView: View {
                     if library.container != nil { await reader.start(library: library) }
                 }
                 .task(id: previewInput) {
-                    guard let input = previewInput else {
-                        if !reader.starting && reader.startupError == nil && reader.selection.isEmpty {
-                            LaunchPreview.clear()
-                            preparedPreview = nil
-                            library.preview = nil
-                        }
-                        return
-                    }
+                    guard let input = previewInput else { return }
                     let preview = await Task.detached(priority: .userInitiated) {
                         try? LaunchPreview.make(from: input.document, hiddenText: input.hiddenText)
                     }.value
                     guard !Task.isCancelled, let preview else { return }
                     preparedPreview = preview
                     preview.save()
+                }
+                .onChange(of: reader.starting) { _, starting in
+                    if !starting && reader.startupError == nil && reader.selection.isEmpty {
+                        LaunchPreview.clear()
+                        preparedPreview = nil
+                        library.preview = nil
+                        library.launchDocument = nil
+                    }
                 }
                 .task(id: reader.selection) { await reader.loadSelected() }
                 .task {
@@ -104,7 +105,7 @@ struct ReaderView: View {
             .foregroundStyle(themeColor(colorScheme == .dark ? darkText : lightText))
             .background(themeColor(colorScheme == .dark ? darkBackground : lightBackground))
             .onAppear { recordReadable() }
-        } else if !reader.pageVisible && (reader.starting || reader.loadingArticle || reader.current != nil || reader.document != nil || library.launchDocument != nil) {
+        } else if !reader.pageVisible && (reader.starting || reader.loadingArticle || reader.current != nil || visibleDocument != nil) {
             VStack(spacing: 12) {
                 if let error = reader.articleError ?? reader.startupError ?? library.error {
                     Text("Couldn't prepare the reader").font(.headline)
@@ -140,7 +141,7 @@ struct ReaderView: View {
             ArticleWebView(article: document, hiddenText: reader.current?.hiddenText ?? document.hiddenText, renderVersion: reader.renderVersion, onDisplay: {
                 if !reader.pageVisible { os_signpost(.event, log: LaunchMetrics.log, name: "First WebKit display") }
                 recordReadable()
-                reader.pageDidDisplay()
+                reader.pageDidDisplay(document.key)
             }, onFailure: reader.pageFailed, reload: { await reader.reloadArticle() }, move: reader.move)
                 .accessibilityAction(named: "Next article") { reader.move(1) }
                 .accessibilityAction(named: "Previous article") { reader.move(-1) }
