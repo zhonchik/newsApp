@@ -13,7 +13,7 @@ struct ReaderPalette: Sendable, Equatable {
 struct ThemeSettings: View {
     @AppStorage("lightText") private var lightText = "#202020"
     @AppStorage("lightBackground") private var lightBackground = "#FFFFFF"
-    @AppStorage("darkText") private var darkText = "#EEEEEE"
+    @AppStorage("darkText") private var darkText = "#DEDCD8"
     @AppStorage("darkBackground") private var darkBackground = "#181818"
     var body: some View {
         Section("Light theme") {
@@ -29,7 +29,7 @@ struct ThemeSettings: View {
         Section {
             Button("Reset theme colors") {
                 lightText = "#202020"; lightBackground = "#FFFFFF"
-                darkText = "#EEEEEE"; darkBackground = "#181818"
+                darkText = "#DEDCD8"; darkBackground = "#181818"
             }
             Text("The reader follows your device appearance. Colors are saved separately for each theme.").font(.caption)
         }
