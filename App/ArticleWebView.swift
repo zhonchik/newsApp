@@ -122,9 +122,10 @@ struct ArticleWebView {
             self.move = move; self.reload = reload; self.onDisplay = onDisplay; self.onFailure = onFailure
         }
         func show(_ page: ReaderPage, in webView: ReaderWebView) {
-            lastHTML = page.html
+            guard case .web(let html) = page.content else { return }
+            lastHTML = html
             recoveries = 0
-            load(page.html, in: webView)
+            load(html, in: webView)
         }
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             guard navigation === activeNavigation else { return }

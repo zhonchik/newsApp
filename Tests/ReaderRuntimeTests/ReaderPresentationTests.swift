@@ -11,11 +11,11 @@ final class ReaderPresentationTests: XCTestCase {
         let item = RemoteArticle(id: "saved", title: "Saved article", url: "https://example.org/story", text: "", published: Date())
         let record = Article(item: item, subscription: subscription)
         record.key = "saved"
-        let content = CachedArticle(text: "", html: "<p>Saved article text</p><img width='80' height='80' src='https://example.org/photo.jpg'>", feedHTML: "")
+        let content = CachedArticle(text: "", html: "<table><tr><td>Saved article text</td></tr></table><img width='80' height='80' src='https://example.org/photo.jpg'>", feedHTML: "")
         let document = ReaderDocument(ArticleLink(record, hiddenText: ""), content: content)
         let input = ReaderPage.Input(article: document, hiddenText: "", palette: .saved(), version: 0)
         let page = await ReaderPage.prepare(input, cache: cache)
-        let html = page.html
+        guard case .web(let html) = page.content else { return XCTFail("Expected table fallback") }
         XCTAssertEqual(page.input, input)
         XCTAssertTrue(html.contains(ReaderAppearance.stylesheet(input.palette)))
         XCTAssertTrue(html.contains("data-reader-src="))

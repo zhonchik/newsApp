@@ -47,6 +47,7 @@ final class NativeArticleTests: XCTestCase {
     func testTableKeepsCompleteWebRepresentation() async {
         let page = await page("<table><tr><td>Cell</td></tr></table>", url: "https://example.org/story")
         XCTAssertNil(page.nativeBody)
-        XCTAssertTrue(page.html.contains("<td>Cell</td>"))
+        guard case .web(let html) = page.content else { return XCTFail("Expected table fallback") }
+        XCTAssertTrue(html.contains("<td>Cell</td>"))
     }
 }

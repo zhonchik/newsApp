@@ -5,8 +5,15 @@ import Foundation
 
 struct ReaderPage: Sendable {
     let input: Input
-    let html: String
-    let nativeBody: NativeArticleBody?
+    enum Content: Sendable {
+        case native(NativeArticleBody)
+        case web(String)
+    }
+    let content: Content
+    var nativeBody: NativeArticleBody? {
+        if case .native(let body) = content { return body }
+        return nil
+    }
     let reusedBody: Bool
 
     struct Input: Equatable, Sendable {
@@ -21,6 +28,9 @@ struct ReaderPage: Sendable {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
         let formatted = try? await cache.formattedBody(article, hiddenText: input.hiddenText)
+        if let formatted, let blocks = formatted.nativeBody {
+            return ReaderPage(input: input, content: .native(blocks), reusedBody: formatted.reused)
+        }
         let body = formatted?.html ?? "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
         let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
         let html = """
@@ -43,6 +53,6 @@ struct ReaderPage: Sendable {
         \(headline)<article>\(body)</article>
         <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
         """
-        return ReaderPage(input: input, html: html, nativeBody: formatted?.nativeBody, reusedBody: formatted?.reused == true)
+        return ReaderPage(input: input, content: .web(html), reusedBody: formatted?.reused == true)
     }
 }

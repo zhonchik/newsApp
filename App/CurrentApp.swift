@@ -65,7 +65,7 @@ enum LaunchMetrics {
             guard let doc else { return nil }
             let input = ReaderPage.Input(article: doc, hiddenText: doc.hiddenText, palette: .saved(), version: 0)
             let page = await ReaderPage.prepare(input)
-            LaunchMetrics.mark(page.reusedBody ? "Launch HTML ready (cached body)" : "Launch HTML ready (new body)")
+            LaunchMetrics.mark(page.reusedBody ? "Launch article ready (cached body)" : "Launch article ready (new body)")
             return page
         }
     }
