@@ -51,8 +51,10 @@ struct ReaderView: View {
     }
     @ViewBuilder private var content: some View {
         let document = visibleDocument
+        let link = reader.current
+        let hiddenText = link?.key == document?.key ? link?.hiddenText : nil
         if document != nil || (reader.starting && library.error == nil && reader.startupError == nil) {
-            HybridArticleReader(launchPage: reader.starting && reader.document == nil ? library.launchPage : nil, article: document, hiddenText: reader.current?.hiddenText ?? document?.hiddenText ?? "", renderVersion: reader.renderVersion, onDisplay: { renderer in
+            HybridArticleReader(launchPage: reader.starting && reader.document == nil ? library.launchPage : nil, article: document, hiddenText: hiddenText ?? document?.hiddenText ?? "", renderVersion: reader.renderVersion, onDisplay: { renderer in
                 guard let document else { return }
                 if !reader.pageVisible {
                     LaunchMetrics.mark("First \(renderer) article layout confirmed", finished: true)
@@ -113,7 +115,6 @@ struct ReaderView: View {
         }
     }
 }
-
 
 private struct UnreadCountLabel: View {
     let count: Int
