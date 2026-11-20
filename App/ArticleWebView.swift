@@ -81,7 +81,6 @@ struct ArticleWebView {
         guard coordinator.input != input else { return }
         coordinator.input = input
         coordinator.renderTask?.cancel()
-        webView.beginLoading()
         if let launchPage, launchPage.input == input {
             coordinator.show(launchPage, in: webView)
             return
@@ -122,9 +121,10 @@ struct ArticleWebView {
             self.move = move; self.reload = reload; self.onDisplay = onDisplay; self.onFailure = onFailure
         }
         func show(_ page: ReaderPage, in webView: ReaderWebView) {
-            lastHTML = page.html
+            guard case .web(let html) = page.content else { return }
+            lastHTML = html
             recoveries = 0
-            load(page.html, in: webView)
+            load(html, in: webView)
         }
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             guard navigation === activeNavigation else { return }
@@ -150,11 +150,10 @@ struct ArticleWebView {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard navigation === activeNavigation else { return }
             // Confirm usable layout if WebKit throttles animation-frame callbacks.
-            webView.evaluateJavaScript("document.readyState === 'complete' && !!document.body && document.body.getBoundingClientRect().height > 0", in: nil, in: .defaultClient) { [weak self, weak webView] result in
+            webView.evaluateJavaScript("document.readyState === 'complete' && !!document.body && document.body.getBoundingClientRect().height > 0", in: nil, in: .defaultClient) { [weak self] result in
                 guard let self, navigation === self.activeNavigation else { return }
                 if case .success(let value) = result, value as? Bool == true {
                     self.loadTimeout?.cancel()
-                    (webView as? ReaderWebView)?.endLoading()
                     self.onDisplay()
                 }
             }
@@ -173,7 +172,6 @@ struct ArticleWebView {
                 recoveries += 1
                 load(lastHTML, in: view)
             } else {
-                view.endLoading()
                 onFailure("The article could not be displayed. Please try again.")
                 // An actionable error instead of an indefinitely blank reader.
                 view.loadHTMLString("<html><meta name='color-scheme' content='light dark'><body><p>The reader could not display this article. Pull down to reload it, or switch articles and try again.</p></body></html>", baseURL: nil)
@@ -183,7 +181,6 @@ struct ArticleWebView {
             guard message.frameInfo.isMainFrame else { return }
             if message.name == "readerReady", let key = message.body as? String, key == input?.article.key {
                 loadTimeout?.cancel()
-                (message.webView as? ReaderWebView)?.endLoading()
                 onDisplay()
             } else if message.name == "cacheVideo", let raw = message.body as? String, let url = URL(string: raw), url.scheme == "https" {
                 Task { _ = try? await MediaCache.shared.entry(for: url) }
@@ -221,28 +218,6 @@ struct ArticleWebView {
 
 final class ReaderWebView: WKWebView {
     var move: ((Int) -> Void)?
-    #if os(iOS)
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    func beginLoading() {
-        if spinner.superview == nil {
-            addSubview(spinner); spinner.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([spinner.centerXAnchor.constraint(equalTo: centerXAnchor), spinner.centerYAnchor.constraint(equalTo: centerYAnchor)])
-        }
-        spinner.startAnimating()
-    }
-    func endLoading() { spinner.stopAnimating() }
-    #else
-    private let spinner = NSProgressIndicator()
-    func beginLoading() {
-        if spinner.superview == nil {
-            spinner.style = .spinning; spinner.isDisplayedWhenStopped = false
-            addSubview(spinner); spinner.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([spinner.centerXAnchor.constraint(equalTo: centerXAnchor), spinner.centerYAnchor.constraint(equalTo: centerYAnchor)])
-        }
-        spinner.startAnimation(nil)
-    }
-    func endLoading() { spinner.stopAnimation(nil) }
-    #endif
     #if os(macOS)
     override func swipe(with event: NSEvent) {
         if event.deltaX != 0 { move?(event.deltaX < 0 ? 1 : -1) }

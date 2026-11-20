@@ -1,14 +1,15 @@
 import SwiftUI
 import SwiftData
+import os
 
 @MainActor final class ReaderState: ObservableObject {
-    @Published var articles: [ArticleLink] = []
-    @Published var subscriptions: [SubscriptionInfo] = []
+    @Published private var queue = LibrarySnapshot(articles: [], subscriptions: [], savedKey: "")
+    var articles: [ArticleLink] { queue.articles }
+    var subscriptions: [SubscriptionInfo] { queue.subscriptions }
     @Published var selection = ""
     @Published var document: ReaderDocument?
     @Published var starting = true
     @Published var pageVisible = false
-    @Published var loadingArticle = false
     @Published var updating = false
     @Published var reloadingArticle = false
     var isUpdating: Bool { updating || reloadingArticle }
@@ -27,9 +28,11 @@ import SwiftData
     private var backgroundStarted = false
     private var maintenance: Task<Void, Never>?
     private var cacheWarmup: Task<Void, Never>?
-    private var loadingKey: String?
-    var current: ArticleLink? { articles.first { $0.key == selection } }
-    var unreadCount: Int { articles.filter { !$0.read }.count }
+    private var loadRequest: UUID?
+    var current: ArticleLink? { queue.indexByKey[selection].map { articles[$0] } }
+    var unreadCount: Int { queue.unreadCount }
+
+    var firstUnread: String? { queue.firstUnread }
 
     func start(library: LibraryContainer) async {
         guard worker == nil, !opening else { return }
@@ -94,21 +97,27 @@ import SwiftData
             await self?.refresh(force: true)
         }
     }
-    func reloadSnapshot() async throws {
-        guard let worker else { return }
-        let snapshot = try await worker.snapshot()
-        articles = snapshot.articles; subscriptions = snapshot.subscriptions
-        selection = ReaderSelection.restored(keys: articles.map(\.key), current: selection, saved: snapshot.savedKey)
+    @discardableResult
+    func reloadSnapshot(previousIndices: [String: Int]? = nil) async throws -> Int {
+        guard let worker else { return 0 }
+        let interval = OSSignpostID(log: LaunchMetrics.log)
+        os_signpost(.begin, log: LaunchMetrics.log, name: "Queue snapshot", signpostID: interval)
+        defer { os_signpost(.end, log: LaunchMetrics.log, name: "Queue snapshot", signpostID: interval) }
+        let snapshot = try await worker.snapshot(previousIndices: previousIndices)
+        queue = snapshot
+        let restored = snapshot.restoredSelection(selection)
+        if selection != restored { selection = restored }
         if selection.isEmpty { document = nil }
+        return snapshot.addedCount
     }
     func loadSelected() async {
-        guard let worker, let link = current, loadingKey != link.key else { return }
+        guard let worker, let link = current else { return }
         let key = link.key
-        loadingKey = key
-        loadingArticle = true; articleError = nil
+        let request = UUID()
+        loadRequest = request
+        articleError = nil
         defer {
-            if loadingKey == key { loadingKey = nil }
-            if selection == key { loadingArticle = false }
+            if loadRequest == request { loadRequest = nil }
         }
         do {
             let content: CachedArticle
@@ -119,17 +128,18 @@ import SwiftData
                 content = try await preparation.prepare(link)
                 LaunchMetrics.mark("Publisher body available")
             }
-            guard !Task.isCancelled, selection == key else { return }
+            guard !Task.isCancelled, selection == key, loadRequest == request else { return }
             document = ReaderDocument(link, content: content)
             try? await MediaCache.shared.remember(link)
+            guard !Task.isCancelled, selection == key, loadRequest == request else { return }
             try await worker.markOpened(key)
             try await reloadSnapshot()
             if backgroundStarted, selection == articles.last?.key { await refresh() }
         } catch is CancellationError { }
-        catch { if selection == key { pageFailed(error.localizedDescription) } }
+        catch { if !Task.isCancelled && loadRequest == request && selection == key { pageFailed(error.localizedDescription) } }
     }
     func move(_ offset: Int) {
-        guard let index = articles.firstIndex(where: { $0.key == selection }), articles.indices.contains(index + offset) else {
+        guard let index = queue.indexByKey[selection], articles.indices.contains(index + offset) else {
             if offset > 0 { Task { await refresh() } }
             return
         }
@@ -142,18 +152,37 @@ import SwiftData
         var outcome = RefreshOutcome()
         var toCache: [ArticleLink] = []
         do { try await reloadSnapshot() } catch { outcome.errors.append(error.localizedDescription) }
+        let previous = queue.indexByKey
+        var needsSnapshot = false
+        var mayPublishEarly = articles.isEmpty
         for subscription in subscriptions {
             do {
                 try Task.checkCancellation()
-                let previous = Set(articles.map(\.key))
                 let items = try await service.itemsWithRetry(address: subscription.address, kind: subscription.kind)
-                let links = try await worker.importItems(items, subscriptionID: subscription.id)
-                try await reloadSnapshot()
-                outcome.newArticles += articles.filter { !previous.contains($0.key) }.count
+                needsSnapshot = true
+                let links: [ArticleLink]
+                do {
+                    let interval = OSSignpostID(log: LaunchMetrics.log)
+                    os_signpost(.begin, log: LaunchMetrics.log, name: "Feed import", signpostID: interval)
+                    defer { os_signpost(.end, log: LaunchMetrics.log, name: "Feed import", signpostID: interval) }
+                    links = try await worker.importItems(items, subscriptionID: subscription.id)
+                }
                 toCache.append(contentsOf: links)
-            } catch is CancellationError { return }
+                // Populate an empty reader promptly. Otherwise keep the current
+                // article stable until imports for this refresh have finished.
+                if mayPublishEarly && !links.isEmpty {
+                    outcome.newArticles = try await reloadSnapshot(previousIndices: previous)
+                    needsSnapshot = false
+                    mayPublishEarly = false
+                }
+            } catch is CancellationError { break }
             catch { outcome.errors.append("\(subscription.name): \(error.localizedDescription)") }
         }
+        if needsSnapshot {
+            do { outcome.newArticles = try await reloadSnapshot(previousIndices: previous) }
+            catch { outcome.errors.append(error.localizedDescription) }
+        }
+        guard !Task.isCancelled else { return }
         updateFailed = outcome.failed; updateMessage = outcome.message
         // Optional media failures do not turn a successful feed update red.
         // Cache work is lower priority and never gates initial article display.
