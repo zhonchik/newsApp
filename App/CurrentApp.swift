@@ -3,6 +3,20 @@ import SwiftData
 import os
 
 enum LaunchMetrics {
+    private static let origin = ProcessInfo.processInfo.systemUptime
+    private static let recording = OSAllocatedUnfairLock(initialState: true)
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Current", category: "ReaderLaunch")
+
+    static func mark(_ stage: String, finished: Bool = false) {
+        let start = origin
+        recording.withLock { active in
+            guard active else { return }
+            let ms = Int((ProcessInfo.processInfo.systemUptime - start) * 1000)
+            logger.notice("ReaderLaunch +\(ms) ms  \(stage, privacy: .public)")
+            if finished { active = false }
+        }
+    }
+
     static let log = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "Current", category: .pointsOfInterest)
 }
 
@@ -20,6 +34,7 @@ enum LaunchMetrics {
             let id = OSSignpostID(log: LaunchMetrics.log)
             os_signpost(.begin, log: LaunchMetrics.log, name: "Open store", signpostID: id)
             defer { os_signpost(.end, log: LaunchMetrics.log, name: "Open store", signpostID: id) }
+            LaunchMetrics.mark("Store open started")
             let schema = Schema([Subscription.self, Article.self, ReadingPosition.self])
             #if LOCAL_ONLY
             let config = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
@@ -27,6 +42,7 @@ enum LaunchMetrics {
             let config = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
             #endif
             let container = try ModelContainer(for: schema, configurations: [config])
+            LaunchMetrics.mark("Store opened")
             return LibraryWorker(modelContainer: container)
         }
         store = task
@@ -41,7 +57,9 @@ enum LaunchMetrics {
         async let openingWorker = worker()
         let id = OSSignpostID(log: LaunchMetrics.log)
         os_signpost(.begin, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
+        LaunchMetrics.mark("Reading saved article")
         launchDocument = await MediaCache.shared.launchDocument()
+        LaunchMetrics.mark(launchDocument == nil ? "Saved article cache miss" : "Saved article cache hit")
         os_signpost(.end, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
         do {
             let library = try await openingWorker
@@ -56,6 +74,8 @@ enum LaunchMetrics {
     @UIApplicationDelegateAdaptor(ReaderAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var phase
     #endif
+    init() { LaunchMetrics.mark("App init") }
+
     var body: some Scene {
         WindowGroup {
             ReaderView(library: library)

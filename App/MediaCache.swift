@@ -29,20 +29,35 @@ actor MediaCache {
         let doc = try SwiftSoup.parse(html)
         for image in try doc.select("img[src], video[poster]") {
             let attr = image.tagName() == "video" ? "poster" : "src"
-            if let source = MediaRequest.cachedURL(try image.attr(attr)) { try image.attr(attr, source) }
+            if let raw = MediaURL.resolve(try image.attr(attr)), let source = MediaRequest.cachedURL(raw) {
+                if hasCachedMedia(raw) { try image.attr(attr, source) }
+                else {
+                    try image.removeAttr(attr)
+                    try image.attr("data-reader-" + attr, source)
+                }
+            }
             if image.tagName() == "img" { try image.attr("loading", "lazy").attr("decoding", "async") }
         }
         for video in try doc.select("video[src], source[src]") {
             let raw = try video.attr("src")
             guard let cached = MediaRequest.cachedURL(raw) else { continue }
-            let name = SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
-            if FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path),
-               FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).appendingPathExtension("json").path) {
+            if hasCachedMedia(raw) {
                 try video.attr("src", cached)
             }
         }
         for video in try doc.select("video") { try video.attr("preload", "none") }
+        for frame in try doc.select("iframe[src]") {
+            let source = try frame.attr("src")
+            try frame.removeAttr("src")
+            try frame.attr("data-reader-src", source)
+        }
         return try doc.outerHtml()
+    }
+    private func hasCachedMedia(_ url: String) -> Bool {
+        let name = SHA256.hash(data: Data(url.utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = directory.appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: file.path)
+            && FileManager.default.fileExists(atPath: file.appendingPathExtension("json").path)
     }
     func entry(for requestedURL: URL, force: Bool = false) async throws -> Entry {
         guard let normalized = MediaURL.resolve(requestedURL.absoluteString), let url = URL(string: normalized) else { throw URLError(.badURL) }

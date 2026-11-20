@@ -5,7 +5,7 @@ import SwiftSoup
 /// A persistent reader document. Only generated YouTube embeds may run provider scripts.
 struct ArticleWebView {
     @Environment(\.colorScheme) private var colorScheme
-    let article: ReaderDocument
+    let article: ReaderDocument?
     let hiddenText: String
     let renderVersion: Int
     let onDisplay: () -> Void
@@ -50,6 +50,7 @@ struct ArticleWebView {
     }
     @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move, reload: reload, onDisplay: onDisplay, onFailure: onFailure) }
     @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
+        LaunchMetrics.mark("Reader WebKit creation started")
         let config = WKWebViewConfiguration()
         // The parent CSP blocks scripts; only the allowlisted YouTube frame runs JS.
         config.defaultWebpagePreferences.allowsContentJavaScript = true
@@ -57,9 +58,7 @@ struct ArticleWebView {
         config.setURLSchemeHandler(MediaSchemeHandler(), forURLScheme: "reader-media")
         // Isolated app script: publisher scripts remain blocked by the document CSP.
         let playbackScript = """
-        requestAnimationFrame(function() { requestAnimationFrame(function() {
-          window.webkit.messageHandlers.readerReady.postMessage(document.documentElement.getAttribute('data-reader-key') || '');
-        }); });
+        \(ReaderPresentation.afterFirstFrame)
         document.addEventListener('play', function(event) {
           if (event.target.tagName === 'VIDEO') {
             window.webkit.messageHandlers.cacheVideo.postMessage(event.target.currentSrc || event.target.src);
@@ -100,11 +99,18 @@ struct ArticleWebView {
             gesture.direction = direction; gesture.delegate = coordinator; webView.addGestureRecognizer(gesture)
         }
         #endif
+        if article == nil {
+            // Start the real reader process while its article is being restored.
+            // The bootstrap navigation never enters the article recovery timer.
+            webView.loadHTMLString("<meta name='color-scheme' content='light dark'>", baseURL: nil)
+        }
+        LaunchMetrics.mark("Reader WebKit created")
         return webView
     }
     @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
         coordinator.move = move; coordinator.reload = reload; coordinator.onDisplay = onDisplay; coordinator.onFailure = onFailure; webView.move = move
         applyBackground(webView)
+        guard let article else { return }
         let palette = ReaderPalette(lightText: lightText, lightBackground: lightBackground, darkText: darkText, darkBackground: darkBackground)
         let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette, version: renderVersion)
         guard coordinator.input != input else { return }
@@ -112,10 +118,12 @@ struct ArticleWebView {
         coordinator.renderTask?.cancel()
         webView.beginLoading()
         coordinator.renderTask = Task { @MainActor [weak webView, weak coordinator] in
+            LaunchMetrics.mark("Formatting article started")
             let html = await Task.detached(priority: .userInitiated) {
                 await Self.document(article: input.article, hiddenText: input.hiddenText, palette: input.palette)
             }.value
             guard !Task.isCancelled, let coordinator, coordinator.input == input else { return }
+            LaunchMetrics.mark("Formatted article ready")
             // A stable HTTPS base supplies the Referer required by YouTube embeds.
             coordinator.lastHTML = html; coordinator.recoveries = 0
             if let webView { coordinator.load(html, in: webView) }
@@ -157,11 +165,13 @@ struct ArticleWebView {
             self.move = move; self.reload = reload; self.onDisplay = onDisplay; self.onFailure = onFailure
         }
         func load(_ html: String, in webView: ReaderWebView) {
+            LaunchMetrics.mark("Article navigation started")
             activeNavigation = webView.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
             loadTimeout?.cancel()
             loadTimeout = Task { @MainActor [weak self, weak webView] in
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
                 guard let self, let webView else { return }
+                LaunchMetrics.mark("15-second WebKit recovery timer fired")
                 self.recover(webView)
             }
         }
@@ -178,7 +188,7 @@ struct ArticleWebView {
                 }
             }
         }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { recover(webView) }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if activeNavigation != nil { recover(webView) } }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             if navigation === activeNavigation, (error as NSError).code != NSURLErrorCancelled { recover(webView) }
         }

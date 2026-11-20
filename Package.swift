@@ -10,7 +10,7 @@ let package = Package(
         .target(name: "ReaderContent", dependencies: ["SwiftSoup"], path: "ReaderContent"),
         .target(name: "ReaderRuntime", dependencies: ["ReaderContent", "SwiftSoup"], path: "App",
                 exclude: ["Assets.xcassets", "Resources", "ArticlePreparation.swift", "ArticleWebView.swift", "CurrentApp.swift", "FeedService.swift", "ReaderAppDelegate.swift", "ReaderState.swift", "ReaderView.swift", "SettingsView.swift", "SubscriptionsView.swift", "ThemeSettings.swift"],
-                sources: ["Models.swift", "LibraryWorker.swift", "MediaCache.swift"]),
+                sources: ["ReaderPresentation.swift", "Models.swift", "LibraryWorker.swift", "MediaCache.swift"]),
         .testTarget(name: "ReaderContentTests", dependencies: ["ReaderContent"]),
         .testTarget(name: "ReaderRuntimeTests", dependencies: ["ReaderRuntime", "ReaderContent"])
     ]

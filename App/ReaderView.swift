@@ -48,9 +48,12 @@ struct ReaderView: View {
         }
     }
     @ViewBuilder private var content: some View {
-        if let document = visibleDocument {
-            ArticleWebView(article: document, hiddenText: reader.current?.hiddenText ?? document.hiddenText, renderVersion: reader.renderVersion, onDisplay: {
+        let document = visibleDocument
+        if document != nil || (reader.starting && library.error == nil && reader.startupError == nil) {
+            ArticleWebView(article: document, hiddenText: reader.current?.hiddenText ?? document?.hiddenText ?? "", renderVersion: reader.renderVersion, onDisplay: {
+                guard let document else { return }
                 if !reader.pageVisible {
+                    LaunchMetrics.mark("First article layout confirmed", finished: true)
                     os_signpost(.event, log: LaunchMetrics.log, name: "First WebKit display")
                     os_signpost(.event, log: LaunchMetrics.log, name: "First readable article")
                 }
@@ -64,7 +67,7 @@ struct ReaderView: View {
                             Text(error)
                             Button("Try again") { retryStartup() }
                         }.padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    } else if !reader.selection.isEmpty && document.key != reader.selection {
+                    } else if !reader.selection.isEmpty && document?.key != reader.selection {
                         ProgressView("Loading article…")
                             .padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     }

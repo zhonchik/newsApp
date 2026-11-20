@@ -39,9 +39,12 @@ import SwiftData
             worker = background
             // Publish the saved body before any all-library scan or migration.
             if let cached = try await background.launchDocument(restored: library.launchDocument) {
+                LaunchMetrics.mark("Saved database article available")
                 document = cached; selection = cached.key
             }
+            LaunchMetrics.mark("Queue lookup started")
             try await reloadSnapshot()
+            LaunchMetrics.mark("Queue available")
             starting = false
             if let current, document?.key == current.key { try? await MediaCache.shared.remember(current) }
             if displayedKey == selection || current == nil || articleError != nil { beginBackgroundWork() }
@@ -92,7 +95,11 @@ import SwiftData
             let content: CachedArticle
             if let cached = await MediaCache.shared.article(key) { content = cached }
             else if let legacy = try await worker.legacyBody(key) { content = legacy }
-            else { content = try await preparation.prepare(link) }
+            else {
+                LaunchMetrics.mark("Selected body missing locally; publisher fetch started")
+                content = try await preparation.prepare(link)
+                LaunchMetrics.mark("Publisher body available")
+            }
             guard !Task.isCancelled, selection == key else { return }
             document = ReaderDocument(link, content: content)
             try? await MediaCache.shared.remember(link)
