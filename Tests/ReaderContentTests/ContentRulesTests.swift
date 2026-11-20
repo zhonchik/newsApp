@@ -11,6 +11,29 @@ final class ContentRulesTests: XCTestCase {
         XCTAssertFalse(result.contains("Another article"))
         XCTAssertFalse(result.contains("Menu"))
     }
+
+    func testNPlusOneKeepsDefinitionsWithTheirInlineTerms() throws {
+        let url = "https://nplus1.ru/news/story"
+        let page = """
+        <section data-heading-wrap><div class="n1_material">
+        <p>Перед <app-note text="миоклонус"><template v-slot:content><div class="n1_material"><p>Краткое сокращение <em>мышц</em>.</p></div></template></app-note>, после.
+        <app-note text="ВИП"><template v-slot:content><div class="n1_material"><p>Пептид.</p></div></template></app-note>.
+        <app-note text="Слово"></app-note>.</p>
+        </div></section>
+        """
+        let body = try XCTUnwrap(ContentRules.articleBody(page: page, url: url))
+        let result = try ReaderContent.html(body: body, feed: "", baseURL: url)
+
+        XCTAssertTrue(result.contains("Перед <button type=\"button\" popovertarget=\"reader-definition-0\">миоклонус</button>"))
+        XCTAssertTrue(result.contains("id=\"reader-definition-0\" popover=\"auto\" role=\"note\" aria-label=\"миоклонус\">Краткое сокращение мышц.</span>, после."))
+        XCTAssertTrue(result.contains("popovertarget=\"reader-definition-1\">ВИП</button>"))
+        XCTAssertTrue(result.contains("id=\"reader-definition-1\" popover=\"auto\" role=\"note\" aria-label=\"ВИП\">Пептид.</span>"))
+        XCTAssertTrue(result.contains("Слово."))
+        XCTAssertEqual(result.components(separatedBy: "Краткое сокращение").count, 2)
+        XCTAssertEqual(result.components(separatedBy: "Пептид.").count, 2)
+        XCTAssertFalse(result.contains("<app-note"))
+        XCTAssertFalse(result.contains("<template"))
+    }
     func testMacRumorsExcludesPopularStories() throws {
         let page = "<article><div class='js-content'><p>Story</p></div></article><h2>Popular Stories</h2><p>Unrelated</p>"
         let result = try XCTUnwrap(ContentRules.articleBody(page: page, url: "https://www.macrumors.com/story"))

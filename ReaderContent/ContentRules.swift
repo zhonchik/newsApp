@@ -2,15 +2,18 @@ import Foundation
 import SwiftSoup
 
 public enum ContentRules {
-    public static let revision = 4
+    public static let revision = 5
     public static let telegramNotice = "НАСТОЯЩИЙ МАТЕРИАЛ ПРОИЗВЕДЕН ИНОСТРАННЫМ АГЕНТОМ ГАЛЛЯМОВЫМ АББАСОМ РАДИКОВИЧЕМ. 18+"
     public static let telegramNoticeVariant = telegramNotice.replacingOccurrences(of: "ПРОИЗВЕДЕН ИНОСТРАННЫМ", with: "ПРОИЗВЕДЕН И РАСПРОСТРАНЕН ИНОСТРАННЫМ")
     public static func defaultHiddenText(address: String) -> String {
         address.lowercased().replacingOccurrences(of: "@", with: "") == "abbasgallyamovpolitics" ? telegramNotice + "\n" + telegramNoticeVariant : ""
     }
     public static func isTelegram(_ url: String) -> Bool { URL(string: url)?.host?.lowercased() == "t.me" }
+    static func isNPlusOne(_ url: String) -> Bool {
+        ["nplus1.ru", "www.nplus1.ru"].contains(URL(string: url)?.host?.lowercased() ?? "")
+    }
     public static func articleBody(page: String, url: String) throws -> String? {
-        let document = try SwiftSoup.parse(page, url)
+        let document = try SwiftSoup.parse(normalizeNotes(page, url: url), url)
         let host = URL(string: url)?.host?.lowercased() ?? ""
         try removeAds(document, host: host)
         if ["f1news.ru", "www.f1news.ru"].contains(host), URL(string: url)?.path.hasPrefix("/gallery/") == true {
@@ -46,7 +49,7 @@ public enum ContentRules {
         }
         guard let selected = try document.select(selector).first(), !(try selected.text()).isEmpty else { return nil }
         let body: Element
-        if host == "nplus1.ru" || host == "www.nplus1.ru" {
+        if isNPlusOne(url) {
             // One story contains multiple material blocks. The read-next section
             // sits outside data-heading-wrap; retain every block of the current story.
             let blocks = try selected.select(".n1_material, figure")
@@ -63,6 +66,30 @@ public enum ContentRules {
             if let absolute = MediaURL.resolve(try image.attr("src"), baseURL: url) { try image.attr("src", absolute) }
         }
         return try body.html()
+    }
+
+    // SwiftSoup closes the surrounding paragraph when it encounters block
+    // tags inside an inline template. Extract each note before parsing the page.
+    private static let notePattern = try! NSRegularExpression(
+        pattern: #"<app-note\b(?:[^"'<>]|"[^"]*"|'[^']*')*>.*?</app-note\s*>"#,
+        options: [.caseInsensitive, .dotMatchesLineSeparators]
+    )
+
+    static func normalizeNotes(_ html: String, url: String) throws -> String {
+        guard isNPlusOne(url), html.range(of: "<app-note", options: .caseInsensitive) != nil else { return html }
+        let result = NSMutableString(string: html)
+        let matches = notePattern.matches(in: html, range: NSRange(html.startIndex..., in: html))
+        for match in matches.reversed() {
+            guard let range = Range(match.range, in: html),
+                  let note = try SwiftSoup.parseBodyFragment(String(html[range])).select("app-note").first(),
+                  let template = try note.select("template").first() else { continue }
+            let term = try note.attr("text").trimmingCharacters(in: .whitespacesAndNewlines)
+            let definition = try template.text()
+            let inline = Element(try Tag.valueOf("app-note"), "")
+            try inline.attr("data-definition", definition).text(term.isEmpty ? definition : term)
+            result.replaceCharacters(in: match.range, with: try inline.outerHtml())
+        }
+        return result as String
     }
     public static func clean(_ document: Document, url: String, hiddenText: String) throws {
         let host = URL(string: url)?.host?.lowercased() ?? ""
