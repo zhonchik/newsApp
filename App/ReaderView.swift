@@ -5,10 +5,8 @@ import os
 struct ReaderView: View {
     @ObservedObject var library: LibraryContainer
     @Environment(\.scenePhase) private var phase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var reader = ReaderState()
     @State private var showSettings = false
-    @State private var dimCount = false
     init(library: LibraryContainer) {
         self.library = library
         library.beginRestore()
@@ -101,24 +99,11 @@ struct ReaderView: View {
     }
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            Text("\(reader.unreadCount) unread")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(reader.updateFailed ? Color(red: 0.78, green: 0.40, blue: 0.40) : Color.secondary)
-                .opacity(dimCount ? 0.35 : 1)
-                .accessibilityValue(reader.isUpdating ? "Updating" : reader.updateMessage)
-                .help(reader.updateMessage)
-                .task(id: [reader.isUpdating, reduceMotion]) {
-                    guard reader.isUpdating, !reduceMotion else { dimCount = false; return }
-                    while !Task.isCancelled {
-                        withAnimation(.easeInOut(duration: 0.8)) { dimCount.toggle() }
-                        do { try await Task.sleep(for: .milliseconds(800)) } catch { break }
-                    }
-                    dimCount = false
-                }
+            UnreadCountLabel(count: reader.unreadCount, updating: reader.isUpdating, failed: reader.updateFailed, message: reader.updateMessage)
         }
         ToolbarItem {
             Button {
-                if let unread = reader.articles.first(where: { !$0.read }) { reader.selection = unread.key }
+                if let key = reader.firstUnread { reader.selection = key }
             } label: { Label("Go to first unread", systemImage: "forward.end.fill") }
             .disabled(reader.unreadCount == 0)
         }
@@ -126,5 +111,32 @@ struct ReaderView: View {
             Button { showSettings = true } label: { Label("Settings", systemImage: "slider.horizontal.3") }
                 .disabled(library.container == nil)
         }
+    }
+}
+
+
+private struct UnreadCountLabel: View {
+    let count: Int
+    let updating: Bool
+    let failed: Bool
+    let message: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dimCount = false
+
+    var body: some View {
+        Text("\(count) unread")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(failed ? Color(red: 0.78, green: 0.40, blue: 0.40) : Color.secondary)
+            .opacity(dimCount ? 0.35 : 1)
+            .accessibilityValue(updating ? "Updating" : message)
+            .help(message)
+            .task(id: [updating, reduceMotion]) {
+                guard updating, !reduceMotion else { dimCount = false; return }
+                while !Task.isCancelled {
+                    withAnimation(.easeInOut(duration: 0.8)) { dimCount.toggle() }
+                    do { try await Task.sleep(for: .milliseconds(800)) } catch { break }
+                }
+                dimCount = false
+            }
     }
 }

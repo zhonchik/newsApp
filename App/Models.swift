@@ -81,6 +81,37 @@ struct LibrarySnapshot: Sendable {
     let articles: [ArticleLink]
     let subscriptions: [SubscriptionInfo]
     let savedKey: String
+    let indexByKey: [String: Int]
+    let unreadCount: Int
+    let firstUnread: String?
+    let addedCount: Int
+
+    init(articles: [ArticleLink], subscriptions: [SubscriptionInfo], savedKey: String,
+         previousIndices: [String: Int]? = nil) {
+        self.articles = articles
+        self.subscriptions = subscriptions
+        self.savedKey = savedKey
+        var indices: [String: Int] = [:]
+        var unread = 0, added = 0
+        var first: String?
+        for (index, link) in articles.enumerated() {
+            if indices[link.key] == nil { indices[link.key] = index }
+            if !link.read {
+                unread += 1
+                if first == nil { first = link.key }
+            }
+            if let previousIndices, previousIndices[link.key] == nil { added += 1 }
+        }
+        indexByKey = indices
+        unreadCount = unread
+        firstUnread = first
+        addedCount = added
+    }
+    func restoredSelection(_ current: String) -> String {
+        if indexByKey[current] != nil { return current }
+        if indexByKey[savedKey] != nil { return savedKey }
+        return articles.first?.key ?? ""
+    }
 }
 struct ReaderDocument: Sendable, Equatable {
     let hiddenText: String

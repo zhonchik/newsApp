@@ -71,7 +71,7 @@ import SwiftData
         }
         return nil
     }
-    func snapshot() throws -> LibrarySnapshot {
+    func snapshot(previousIndices: [String: Int]? = nil) throws -> LibrarySnapshot {
         let context = freshContext()
         let subscriptions = try context.fetch(FetchDescriptor<Subscription>(sortBy: [SortDescriptor(\.created)]))
         let all = try context.fetch(FetchDescriptor<Article>())
@@ -79,9 +79,10 @@ import SwiftData
         let unique = all.filter { !$0.queued && seen.insert(ArticleIdentity.key(url: $0.url, fallback: $0.key)).inserted }
         let ordered = ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
         let positions = try context.fetch(FetchDescriptor<ReadingPosition>(sortBy: [SortDescriptor(\.changed, order: .reverse)]))
+        let hiddenText = Dictionary(subscriptions.map { ($0.id, $0.hiddenText) }, uniquingKeysWith: { first, _ in first })
         return LibrarySnapshot(articles: ordered.map { article in
-            ArticleLink(article, hiddenText: subscriptions.first(where: { $0.id == article.subscriptionID })?.hiddenText ?? "")
-        }, subscriptions: subscriptions.map { SubscriptionInfo(id: $0.id, name: $0.name, address: $0.address, kind: $0.kind) }, savedKey: positions.first?.articleKey ?? "")
+            ArticleLink(article, hiddenText: hiddenText[article.subscriptionID] ?? "")
+        }, subscriptions: subscriptions.map { SubscriptionInfo(id: $0.id, name: $0.name, address: $0.address, kind: $0.kind) }, savedKey: positions.first?.articleKey ?? "", previousIndices: previousIndices)
     }
     func markOpened(_ key: String) throws {
         let context = freshContext()

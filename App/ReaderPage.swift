@@ -22,6 +22,12 @@ struct ReaderPage: Sendable {
         let palette: ReaderPalette
         let version: Int
     }
+    static func visible(for input: Input, launch: Self?, prepared: Self?) -> Self? {
+        if let launch, launch.input == input { return launch }
+        guard let prepared else { return nil }
+        if prepared.input.article.key == input.article.key && prepared.input.hiddenText != input.hiddenText { return nil }
+        return prepared
+    }
     static func prepare(_ input: Input, cache: MediaCache = .shared) async -> ReaderPage {
         let article = input.article
         func escape(_ text: String) -> String {

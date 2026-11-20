@@ -153,6 +153,22 @@ final class LibraryCacheTests: XCTestCase {
         XCTAssertTrue(updated.html.contains("Second"))
     }
 
+    @MainActor func testQueueIndexTracksSelectionUnreadAndAddedStories() {
+        let subscription = Subscription(name: "Feed", address: "test", kind: "rss")
+        let links = ["one", "two", "three"].map { id in
+            let article = Article(item: item(id), subscription: subscription)
+            article.read = id == "one"
+            return ArticleLink(article, hiddenText: "")
+        }
+        let queue = LibrarySnapshot(articles: links, subscriptions: [], savedKey: links[1].key, previousIndices: [links[0].key: 0])
+        XCTAssertEqual(queue.addedCount, 2)
+        XCTAssertEqual(queue.unreadCount, 2)
+        XCTAssertEqual(queue.firstUnread, links[1].key)
+        XCTAssertEqual(queue.indexByKey[links[2].key], 2)
+        XCTAssertEqual(queue.restoredSelection(links[0].key), links[0].key)
+        XCTAssertEqual(queue.restoredSelection("missing"), links[1].key)
+    }
+
     @MainActor private func makeContainer() throws -> ModelContainer {
         let schema = Schema([Article.self, Subscription.self, ReadingPosition.self])
         return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)])

@@ -12,6 +12,14 @@ final class NativeArticleTests: XCTestCase {
         return await ReaderPage.prepare(.init(article: doc, hiddenText: hidden, palette: .saved(), version: 0), cache: cache)
     }
 
+    func testPreviousPageRemainsAvailableWhileAnotherArticleIsPreparing() async {
+        let first = await page("<p>One</p>", url: "https://example.org/one")
+        let second = await page("<p>Two</p>", url: "https://example.org/two")
+        XCTAssertEqual(ReaderPage.visible(for: second.input, launch: nil, prepared: first)?.input, first.input)
+        XCTAssertEqual(ReaderPage.visible(for: second.input, launch: second, prepared: first)?.input, second.input)
+        let filtered = ReaderPage.Input(article: first.input.article, hiddenText: "One", palette: first.input.palette, version: 1)
+        XCTAssertNil(ReaderPage.visible(for: filtered, launch: nil, prepared: first))
+    }
     func testTelegramTextAndBothPhotosKeepTheirOrder() async throws {
         let page = await page("<p>first HIDE</p><img src='https://example.org/a.jpg'><p>second</p><img src='https://example.org/b.jpg'>",
                               url: "https://t.me/news/1", hidden: "HIDE")

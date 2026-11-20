@@ -23,14 +23,15 @@ struct HybridArticleReader: View {
     }
     var body: some View {
         Group {
-            if let input, let page = [launchPage, prepared].compactMap({ $0 }).first(where: { $0.input == input }) {
+            if let input, let page = ReaderPage.visible(for: input, launch: launchPage, prepared: prepared) {
+                let isRequestedPage = page.input == input
                 if let native = page.nativeBody {
-                    NativeArticleView(content: native, article: input.article, palette: input.palette, onDisplay: { onDisplay("Native") }, reload: reload, move: move)
-                        .id(input.article.key)
+                    NativeArticleView(content: native, article: page.input.article, palette: page.input.palette, onDisplay: { if isRequestedPage { onDisplay("Native") } }, reload: { if isRequestedPage { await reload() } }, move: move)
+                        .id(page.input.article.key)
                 } else {
-                    ArticleWebView(launchPage: page, article: input.article, hiddenText: hiddenText,
-                        renderVersion: renderVersion, onDisplay: { onDisplay("WebKit") },
-                        onFailure: onFailure, reload: reload, move: move)
+                    ArticleWebView(launchPage: page, article: page.input.article, hiddenText: page.input.hiddenText,
+                        renderVersion: page.input.version, onDisplay: { if isRequestedPage { onDisplay("WebKit") } },
+                        onFailure: { if isRequestedPage { onFailure($0) } }, reload: { if isRequestedPage { await reload() } }, move: move)
                 }
             } else { Color.clear.accessibilityHidden(true) }
         }
