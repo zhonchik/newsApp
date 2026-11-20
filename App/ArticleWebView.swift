@@ -69,11 +69,6 @@ struct ArticleWebView {
             gesture.direction = direction; gesture.delegate = coordinator; webView.addGestureRecognizer(gesture)
         }
         #endif
-        if article == nil {
-            // Start the real reader process while its article is being restored.
-            // The bootstrap navigation never enters the article recovery timer.
-            webView.loadHTMLString("<meta name='color-scheme' content='light dark'>", baseURL: nil)
-        }
         LaunchMetrics.mark("Reader WebKit created")
         return webView
     }
@@ -131,6 +126,10 @@ struct ArticleWebView {
             recoveries = 0
             load(page.html, in: webView)
         }
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard navigation === activeNavigation else { return }
+            LaunchMetrics.mark("Article provisional navigation started")
+        }
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             guard navigation === activeNavigation else { return }
             LaunchMetrics.mark("Article navigation committed")
@@ -138,6 +137,7 @@ struct ArticleWebView {
         func load(_ html: String, in webView: ReaderWebView) {
             LaunchMetrics.mark("Article navigation started")
             activeNavigation = webView.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
+            LaunchMetrics.mark("Article navigation submitted")
             loadTimeout?.cancel()
             loadTimeout = Task { @MainActor [weak self, weak webView] in
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
