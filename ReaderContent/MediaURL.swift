@@ -1,6 +1,21 @@
 import Foundation
 
 public enum MediaURL {
+    /// Prefer the feed's own URL when a sized rendition contains its full image path.
+    public static func originalImage(for source: String, in feedImages: [String]) -> String? {
+        guard !feedImages.isEmpty,
+              let rendition = URLComponents(string: source), let host = rendition.host?.lowercased() else { return nil }
+        return feedImages.first { image in
+            guard let original = URLComponents(string: image),
+                  original.host?.lowercased() == host, original.scheme == rendition.scheme,
+                  (original.port ?? 443) == (rendition.port ?? 443),
+                  original.percentEncodedPath.count > 1,
+                  rendition.percentEncodedPath.hasSuffix(original.percentEncodedPath) else { return false }
+            let prefix = rendition.percentEncodedPath.dropLast(original.percentEncodedPath.count)
+            return prefix.range(of: #"/[0-9]+x[0-9]+$"#, options: .regularExpression) != nil
+        }
+    }
+
     /// Repair the exact duplicated-origin defect present in F1News RSS images.
     /// Do not strip nested URLs in valid paths/queries or guess at other hosts.
     public static func resolve(_ raw: String, baseURL: String? = nil) -> String? {

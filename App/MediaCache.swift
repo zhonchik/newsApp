@@ -118,12 +118,18 @@ actor MediaCache {
         try trim()
     }
     /// Subscription refresh warms images/posters, never video data.
-    func prefetchImages(_ html: String, baseURL: String, force: Bool = false) async throws {
-        let doc = try SwiftSoup.parse(html, baseURL)
+    func prefetchImages(_ html: String, feed: String = "", baseURL: String, force: Bool = false) async throws {
+        let fallback = try SwiftSoup.parse(feed, baseURL)
+        let feedSources = try fallback.select("img[src]").compactMap { image in
+            MediaURL.resolve(try image.attr("src"), baseURL: baseURL)
+        }
+        let doc = try SwiftSoup.parse(html + feed, baseURL)
         var urls = Set<URL>()
         for image in try doc.select("img[src], video[poster]") {
-            let attr = image.tagName() == "video" ? "poster" : "src"
-            if let normalized = MediaURL.resolve(try image.attr(attr), baseURL: baseURL), let url = URL(string: normalized) { urls.insert(url) }
+            let isImage = image.tagName() == "img"
+            guard let source = MediaURL.resolve(try image.attr(isImage ? "src" : "poster"), baseURL: baseURL) else { continue }
+            let original = isImage ? MediaURL.originalImage(for: source, in: feedSources) : nil
+            if let url = URL(string: original ?? source) { urls.insert(url) }
         }
         // Bound concurrency and memory; URLSession downloads to temporary files.
         var failure: Error?

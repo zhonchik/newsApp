@@ -49,6 +49,27 @@ final class MediaCacheTests: XCTestCase {
         XCTAssertTrue(rendered.contains("reader-media://c.f1news.ru/gallery/2026/photo.jpg"))
         XCTAssertFalse(rendered.contains("ruhttps"))
     }
+    func testPrefetchUsesCachedOriginalForArticleRendition() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = "https://cdn.example.com/photos/image.jpg"
+        let name = SHA256.hash(data: Data(original.utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = root.appendingPathComponent(name)
+        try Data([1, 2, 3]).write(to: file)
+        let entry = MediaCache.Entry(file: file, mime: "image/jpeg", size: 3)
+        try JSONEncoder().encode(entry).write(to: file.appendingPathExtension("json"))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfflineProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let cache = MediaCache(directory: root, limitBytes: 8192, session: session)
+        try await cache.prefetchImages(
+            "<img src='https://cdn.example.com/render/400x0/photos/image.jpg'>",
+            feed: "<img src='\(original)'>",
+            baseURL: "https://publisher.example.com/story"
+        )
+    }
     func testOpeningVideoDocumentDoesNotDownloadVideo() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

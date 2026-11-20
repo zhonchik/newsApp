@@ -30,11 +30,17 @@ final class QueueAndRefreshTests: XCTestCase {
             XCTFail("Expected failure")
         } catch { XCTAssertEqual(attempts, 1) }
     }
-    func testMacRumorsImageRenditionsAreDeduplicated() throws {
-        let body = "<img src='https://images.macrumors.com/t/hash-a/800x0/article-new/2026/11/photo.jpg?lossy'><p>Story</p>"
-        let feed = "<img src='https://images.macrumors.com/t/hash-b/400x0/article-new/2026/11/photo.jpg'><img src='https://images.macrumors.com/article-new/2026/11/photo.jpg'>"
-        let result = try ReaderContent.html(body: body, feed: feed, baseURL: "https://www.macrumors.com/story")
+    func testLinkedArticleImageUsesOriginalFromFeed() throws {
+        let original = "https://cdn.example.com/photos/My%20Photo.jpg?version=2"
+        let body = "<a href='/related-story'><img src='https://cdn.example.com/render/hash/400x0/photos/My%20Photo.jpg?lossy' alt='Photo'></a><p>Story</p>"
+        let feed = "<img src='\(original)'>"
+        let result = try ReaderContent.html(body: body, feed: feed, baseURL: "https://publisher.example.com/story")
         XCTAssertEqual(result.components(separatedBy: "<img").count - 1, 1)
+        XCTAssertTrue(result.contains(original))
+        XCTAssertFalse(result.contains("/render/"))
+        XCTAssertTrue(result.contains("href=\"https://publisher.example.com/related-story\""))
+        XCTAssertTrue(result.contains("alt=\"Photo\""))
+        XCTAssertTrue(result.contains("data-reader-original"))
         XCTAssertTrue(result.contains("Story"))
     }
     func testNPlusOneAdsRemovedWithoutRemovingArticleText() throws {

@@ -29,6 +29,18 @@ final class MediaURLTests: XCTestCase {
         let proxy = "https://cdn.example.com/proxy/https://origin.example.com/image.jpg?next=https://other.example.com"
         XCTAssertEqual(MediaURL.resolve(proxy), proxy)
     }
+    func testOriginalImageRequiresMatchingFeedPathAndOrigin() {
+        let rendition = "https://cdn.example.com/render/400x0/photos/image.jpg"
+        let unrelated = [
+            "https://other.example.com/photos/image.jpg",
+            "https://cdn.example.com:8443/photos/image.jpg",
+            "https://cdn.example.com/other/image.jpg",
+            "https://cdn.example.com/photos/other.jpg"
+        ]
+        XCTAssertNil(MediaURL.originalImage(for: rendition, in: unrelated))
+        XCTAssertNil(MediaURL.originalImage(for: "https://cdn.example.com/adjacent/photos/image.jpg",
+                                            in: ["https://cdn.example.com/photos/image.jpg"]))
+    }
     func testDoesNotGuessOtherConcatenatedOriginsOrAllowUnsafeSchemes() {
         XCTAssertNil(MediaURL.resolve("https://other.examplehttps://cdn.example.com/image.jpg"))
         XCTAssertNil(MediaURL.resolve("javascript:alert(1)"))
