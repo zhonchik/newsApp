@@ -25,6 +25,11 @@ struct NativeArticleBody: Codable, Equatable, Sendable {
         var blocks: [Block] = []
         var runs: [Run] = []
         func flush(_ style: Style) {
+            // Pretty-printed HTML can insert collapsible space at a block boundary.
+            if let last = runs.indices.last, runs[last].text.last == " " {
+                runs[last].text.removeLast()
+                if runs[last].text.isEmpty { runs.removeLast() }
+            }
             if runs.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
                 blocks.append(.text(style, runs))
             }
@@ -58,7 +63,13 @@ struct NativeArticleBody: Codable, Equatable, Sendable {
             case "b", "strong": nested.bold = true; boundary = false
             case "i", "em": nested.italic = true; boundary = false
             case "span": boundary = false
-            case "a": nested.link = url(try e.attr("href")); boundary = false
+            case "a":
+                let href = try e.attr("href")
+                if !href.isEmpty {
+                    guard let destination = url(href) else { return false }
+                    nested.link = destination
+                }
+                boundary = false
             case "br":
                 runs.append(Run(text: "\n")); return true
             case "img":
