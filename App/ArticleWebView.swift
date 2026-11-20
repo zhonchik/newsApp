@@ -22,9 +22,9 @@ struct ArticleWebView {
         func escape(_ text: String) -> String {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
-        let fallback = "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
-        let source = article.html.isEmpty && article.text.isEmpty ? article.feedHTML : article.html
-        let body = (try? ReaderContent.html(body: source.isEmpty ? fallback : source, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)) ?? fallback
+        let formatted = try? await MediaCache.shared.formattedBody(article, hiddenText: hiddenText)
+        LaunchMetrics.mark(formatted?.reused == true ? "Reused formatted article body" : "Built formatted article body")
+        let body = formatted?.html ?? "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
         let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
         let html = """
         <!doctype html><html data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -46,7 +46,7 @@ struct ArticleWebView {
         \(headline)<article>\(body)</article>
         <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
         """
-        return (try? await MediaCache.shared.rewrite(html)) ?? html
+        return html
     }
     @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move, reload: reload, onDisplay: onDisplay, onFailure: onFailure) }
     @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {

@@ -111,6 +111,32 @@ final class LibraryCacheTests: XCTestCase {
         XCTAssertEqual(restored.first?.text, "Article text")
     }
 
+    @MainActor func testFormattedBodySurvivesRelaunchAndRespectsChangedInput() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let subscription = Subscription(name: "Feed", address: "test", kind: "rss")
+        let article = Article(item: item("formatted"), subscription: subscription)
+        let link = ArticleLink(article, hiddenText: "")
+        let content = CachedArticle(text: "", html: "<p>First secret</p><img src='https://example.com/image.jpg'>", feedHTML: "")
+        let doc = ReaderDocument(link, content: content)
+        let writer = MediaCache(directory: root)
+        let first = try await writer.formattedBody(doc, hiddenText: "")
+        XCTAssertFalse(first.reused)
+        XCTAssertTrue(first.html.contains("data-reader-src"))
+        try await writer.saveFormattedBody()
+        let reader = MediaCache(directory: root)
+        let next = try await reader.formattedBody(doc, hiddenText: "")
+        XCTAssertTrue(next.reused)
+        XCTAssertEqual(next.html, first.html)
+        let filtered = try await reader.formattedBody(doc, hiddenText: "secret")
+        XCTAssertFalse(filtered.reused)
+        XCTAssertFalse(filtered.html.contains("secret"))
+        let changed = ReaderDocument(link, content: CachedArticle(text: "Second", html: "", feedHTML: ""))
+        let updated = try await reader.formattedBody(changed, hiddenText: "secret")
+        XCTAssertFalse(updated.reused)
+        XCTAssertTrue(updated.html.contains("Second"))
+    }
+
     @MainActor private func makeContainer() throws -> ModelContainer {
         let schema = Schema([Article.self, Subscription.self, ReadingPosition.self])
         return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)])

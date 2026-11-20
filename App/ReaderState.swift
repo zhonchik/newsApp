@@ -22,6 +22,7 @@ import SwiftData
     private let service = FeedService()
     private var lastRefresh = Date.distantPast
     private var opening = false
+    private var loadingInitialQueue = false
     private var displayedKey: String?
     private var backgroundStarted = false
     private var maintenance: Task<Void, Never>?
@@ -33,7 +34,7 @@ import SwiftData
     func start(library: LibraryContainer) async {
         guard worker == nil, !opening else { return }
         opening = true; starting = true; startupError = nil
-        defer { opening = false; starting = false }
+        defer { opening = false }
         do {
             let background = try await library.worker()
             worker = background
@@ -42,6 +43,20 @@ import SwiftData
                 LaunchMetrics.mark("Saved database article available")
                 document = cached; selection = cached.key
             }
+            if let document, displayedKey != document.key, articleError == nil { return }
+            await loadInitialQueue()
+        } catch {
+            startupError = error.localizedDescription
+            worker = nil
+            starting = false
+        }
+    }
+
+    private func loadInitialQueue() async {
+        guard starting, worker != nil, !loadingInitialQueue else { return }
+        loadingInitialQueue = true
+        defer { loadingInitialQueue = false }
+        do {
             LaunchMetrics.mark("Queue lookup started")
             try await reloadSnapshot()
             LaunchMetrics.mark("Queue available")
@@ -50,17 +65,21 @@ import SwiftData
             if displayedKey == selection || current == nil || articleError != nil { beginBackgroundWork() }
         } catch {
             startupError = error.localizedDescription
+            starting = false
             if articles.isEmpty { worker = nil }
         }
     }
     func pageDidDisplay(_ key: String) {
         pageVisible = true
         displayedKey = key
-        if !starting && key == selection { beginBackgroundWork() }
+        if starting && key == document?.key {
+            Task { await loadInitialQueue() }
+        } else if !starting && key == selection { beginBackgroundWork() }
     }
     func pageFailed(_ message: String) {
         articleError = message
-        if !starting { beginBackgroundWork() }
+        if starting && document != nil { Task { await loadInitialQueue() } }
+        else if !starting { beginBackgroundWork() }
     }
     func retryPage() { articleError = nil; renderVersion += 1 }
     private func beginBackgroundWork() {

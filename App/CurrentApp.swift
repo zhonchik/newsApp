@@ -50,19 +50,38 @@ enum LaunchMetrics {
         catch { store = nil; throw error }
     }
 
+    private var restoreTask: Task<ReaderDocument?, Never>?
+
+    func beginRestore() {
+        guard restoreTask == nil else { return }
+        restoreTask = Task.detached(priority: .userInitiated) {
+            LaunchMetrics.mark("Reading saved article")
+            let id = OSSignpostID(log: LaunchMetrics.log)
+            os_signpost(.begin, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
+            let doc = await MediaCache.shared.launchDocument()
+            os_signpost(.end, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
+            LaunchMetrics.mark(doc == nil ? "Saved article cache miss" : "Saved article cache hit")
+            // Prepare on the cache actor while SwiftUI and WebKit mount the reader.
+            if let doc {
+                let body = try? await MediaCache.shared.formattedBody(doc, hiddenText: doc.hiddenText)
+                LaunchMetrics.mark(body?.reused == true ? "Formatted launch cache hit" : "Formatted launch cache miss; body prepared")
+            }
+            return doc
+        }
+    }
+
+    func restore() async {
+        beginRestore()
+        launchDocument = await restoreTask?.value
+        if launchDocument == nil { await open() }
+    }
+
     func open() async {
         guard container == nil, !opening else { return }
         opening = true; error = nil
         defer { opening = false }
-        async let openingWorker = worker()
-        let id = OSSignpostID(log: LaunchMetrics.log)
-        os_signpost(.begin, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
-        LaunchMetrics.mark("Reading saved article")
-        launchDocument = await MediaCache.shared.launchDocument()
-        LaunchMetrics.mark(launchDocument == nil ? "Saved article cache miss" : "Saved article cache hit")
-        os_signpost(.end, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
         do {
-            let library = try await openingWorker
+            let library = try await worker()
             container = library.modelContainer
         } catch { self.error = error.localizedDescription }
     }

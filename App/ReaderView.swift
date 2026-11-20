@@ -9,6 +9,10 @@ struct ReaderView: View {
     @StateObject private var reader = ReaderState()
     @State private var showSettings = false
     @State private var dimCount = false
+    init(library: LibraryContainer) {
+        self.library = library
+        library.beginRestore()
+    }
     private var visibleDocument: ReaderDocument? {
         reader.document ?? (reader.starting ? library.launchDocument : nil)
     }
@@ -16,7 +20,7 @@ struct ReaderView: View {
         NavigationStack {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .task { await library.open() }
+                .task { await library.restore() }
                 .toolbar { toolbar }
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -58,7 +62,12 @@ struct ReaderView: View {
                     os_signpost(.event, log: LaunchMetrics.log, name: "First readable article")
                 }
                 reader.pageDidDisplay(document.key)
-            }, onFailure: reader.pageFailed, reload: { await reader.reloadArticle() }, move: reader.move)
+                Task { await library.open() }
+                Task(priority: .utility) { try? await MediaCache.shared.saveFormattedBody() }
+            }, onFailure: { message in
+                reader.pageFailed(message)
+                Task { await library.open() }
+            }, reload: { await reader.reloadArticle() }, move: reader.move)
                 .accessibilityAction(named: "Next article") { reader.move(1) }
                 .accessibilityAction(named: "Previous article") { reader.move(-1) }
                 .overlay {
