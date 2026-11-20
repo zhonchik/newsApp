@@ -29,22 +29,8 @@ struct ArticleWebView {
         <!doctype html><html data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: reader-media:; media-src https: reader-media:; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
         <style>
-        :root { color-scheme: light dark; font: -apple-system-body; }
-        body { color: \(ReaderPalette.valid(palette.lightText, fallback: "#202020")); background: \(ReaderPalette.valid(palette.lightBackground, fallback: "#FFFFFF")); }
-        @media (prefers-color-scheme: dark) { body { color: \(ReaderPalette.valid(palette.darkText, fallback: "#DEDCD8")); background: \(ReaderPalette.valid(palette.darkBackground, fallback: "#181818")); } }
+        \(ReaderAppearance.stylesheet(palette))
         body { margin:0 auto; padding:0 24px 24px; max-width:680px; overflow-wrap:anywhere; }
-        article, h1 { font-family:ui-serif, Georgia, serif; }
-        article { font-size:1.15em; line-height:1.7; }
-        article p { margin-block:0 1em; }
-        @media (prefers-color-scheme: dark) {
-            article { font-weight:350; }
-            article :is(strong,b) { font-weight:700; }
-        }
-        @media (prefers-color-scheme: dark) and (prefers-contrast: more) {
-            article { font-weight:400; }
-        }
-        h1 { font-size:1.4em; line-height:1.3; }
-        h2,h3,h4 { line-height:1.3; }
         /* Fill the reader column even when publisher HTML supplies small dimensions. */
         img { display:block; width:100%; max-width:100%; height:auto; border-radius:6px; }
         img[data-reader-original] { width:auto; }

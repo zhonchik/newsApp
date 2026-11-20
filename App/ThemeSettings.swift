@@ -19,12 +19,12 @@ struct ThemeSettings: View {
         Section("Light theme") {
             ColorPicker("Text", selection: color($lightText), supportsOpacity: false)
             ColorPicker("Background", selection: color($lightBackground), supportsOpacity: false)
-            preview(text: lightText, background: lightBackground)
+            preview(.light)
         }
         Section("Dark theme") {
             ColorPicker("Text", selection: color($darkText), supportsOpacity: false)
             ColorPicker("Background", selection: color($darkBackground), supportsOpacity: false)
-            preview(text: darkText, background: darkBackground)
+            preview(.dark)
         }
         Section {
             Button("Reset theme colors") {
@@ -34,9 +34,13 @@ struct ThemeSettings: View {
             Text("The reader follows your device appearance. Colors are saved separately for each theme.").font(.caption)
         }
     }
-    private func preview(text: String, background: String) -> some View {
-        Text("A little more perspective.").font(.body).foregroundStyle(Self.color(text))
-            .frame(maxWidth: .infinity, alignment: .leading).padding().background(Self.color(background)).clipShape(RoundedRectangle(cornerRadius: 8))
+    private func preview(_ scheme: ColorScheme) -> some View {
+        ReaderThemePreview(
+            palette: ReaderPalette(lightText: lightText, lightBackground: lightBackground,
+                                   darkText: darkText, darkBackground: darkBackground),
+            scheme: scheme
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     private static func color(_ hex: String) -> Color {
         let value = UInt32(hex.dropFirst(), radix: 16) ?? 0
