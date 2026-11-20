@@ -86,12 +86,16 @@ struct ReaderView: View {
     }
     @ViewBuilder private var preparationOverlay: some View {
         if !reader.pageVisible, let preview = launchPreview,
-           !preview.text.isEmpty, reader.articleError == nil, reader.startupError == nil, library.error == nil {
+           !preview.text.isEmpty {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(preview.source).font(.caption)
                     if !preview.title.isEmpty { Text(preview.title).font(.title.bold()) }
                     Text(preview.text).font(.system(.body, design: .serif)).textSelection(.enabled)
+                    if let error = reader.articleError ?? reader.startupError ?? library.error {
+                        Text(error).font(.callout)
+                        Button("Try again") { retryStartup() }
+                    }
                 }
                 .frame(maxWidth: 680, alignment: .leading)
                 .padding()
@@ -105,14 +109,7 @@ struct ReaderView: View {
                 if let error = reader.articleError ?? reader.startupError ?? library.error {
                     Text("Couldn't prepare the reader").font(.headline)
                     Text(error).font(.callout)
-                    Button("Try again") {
-                        if reader.document != nil || library.launchDocument != nil { reader.retryPage() }
-                        else if reader.current != nil { Task { await reader.loadSelected() } }
-                        else { Task {
-                            if library.container != nil { await reader.start(library: library) }
-                            else { await library.open() }
-                        } }
-                    }
+                    Button("Try again") { retryStartup() }
                 } else {
                     ProgressView()
                     Text("Preparing…").font(.headline)
@@ -124,6 +121,14 @@ struct ReaderView: View {
             .tint(themeColor(colorScheme == .dark ? darkText : lightText))
             .background(themeColor(colorScheme == .dark ? darkBackground : lightBackground))
             .accessibilityElement(children: .contain)
+        }
+    }
+    private func retryStartup() {
+        Task {
+            if library.container == nil { await library.open() }
+            else if reader.startupError != nil { await reader.start(library: library) }
+            else if visibleDocument?.key == reader.selection && visibleDocument != nil { reader.retryPage() }
+            else { await reader.loadSelected() }
         }
     }
     private func themeColor(_ hex: String) -> Color {

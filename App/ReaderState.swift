@@ -91,11 +91,8 @@ import SwiftData
         do {
             let content: CachedArticle
             if let cached = await MediaCache.shared.article(key) { content = cached }
-            else {
-                try await worker.migrateContent(key: key)
-                if let migrated = await MediaCache.shared.article(key) { content = migrated }
-                else { content = try await preparation.prepare(link) }
-            }
+            else if let legacy = try await worker.legacyBody(key) { content = legacy }
+            else { content = try await preparation.prepare(link) }
             guard !Task.isCancelled, selection == key else { return }
             document = ReaderDocument(link, content: content)
             try? await MediaCache.shared.remember(link)

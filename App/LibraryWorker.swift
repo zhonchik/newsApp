@@ -93,16 +93,22 @@ import SwiftData
         else { context.insert(ReadingPosition(articleKey: key)) }
         try context.save()
     }
+    func legacyBody(_ key: String) throws -> CachedArticle? {
+        var descriptor = FetchDescriptor<Article>(predicate: #Predicate { $0.key == key })
+        descriptor.fetchLimit = 1
+        guard let article = try freshContext().fetch(descriptor).first,
+              !article.text.isEmpty || !article.html.isEmpty || !article.feedHTML.isEmpty else { return nil }
+        return CachedArticle(text: article.text, html: article.html, feedHTML: article.feedHTML, revision: article.contentRevision)
+    }
+
     /// Upgrade old installations without dropping the only offline copy first.
-    func migrateContent(key: String? = nil, cache: MediaCache = .shared) async throws {
+    func migrateContent(cache: MediaCache = .shared) async throws {
         var after: String?
-        repeat {
+        while true {
             try Task.checkCancellation()
             let context = freshContext()
             var descriptor = FetchDescriptor<Article>(sortBy: [SortDescriptor(\.key)])
-            if let key {
-                descriptor.predicate = #Predicate { $0.key == key && ($0.html != "" || $0.text != "" || $0.feedHTML != "") }
-            } else if let after {
+            if let after {
                 descriptor.predicate = #Predicate {
                     $0.key > after && ($0.html != "" || $0.text != "" || $0.feedHTML != "")
                 }
@@ -120,7 +126,7 @@ import SwiftData
             try context.save()
             after = articles.last?.key
             await Task.yield()
-        } while key == nil
+        }
     }
 
     func feedSubscriptions() throws -> [SubscriptionInfo] {
