@@ -200,6 +200,24 @@ actor MediaCache {
         try JSONEncoder().encode(article).write(to: articleFile(key), options: .atomic)
     }
 
+    /// Feed imports yield between batches so reader media requests can run.
+    func storeFeedBodies(_ batch: ArraySlice<(ArticleLink, RemoteArticle)>, revision: Int) throws {
+        var changed = false
+        do {
+            for (link, item) in batch {
+                try Task.checkCancellation()
+                if article(link.key)?.feedHTML == item.html { continue }
+                let body = CachedArticle(text: item.text, html: item.html, feedHTML: item.html, revision: revision)
+                try writeArticle(body, key: link.key)
+                changed = true
+            }
+        } catch {
+            if changed { try? trim() }
+            throw error
+        }
+        if changed { try trim() }
+    }
+
     func migrateBatch(_ bodies: [(String, CachedArticle)]) throws -> Set<String> {
         for (key, body) in bodies {
             try Task.checkCancellation()

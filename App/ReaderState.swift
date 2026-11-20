@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import os
 
 @MainActor final class ReaderState: ObservableObject {
     @Published private var queue = LibrarySnapshot(articles: [], subscriptions: [], savedKey: "")
@@ -99,6 +100,9 @@ import SwiftData
     @discardableResult
     func reloadSnapshot(previousIndices: [String: Int]? = nil) async throws -> Int {
         guard let worker else { return 0 }
+        let interval = OSSignpostID(log: LaunchMetrics.log)
+        os_signpost(.begin, log: LaunchMetrics.log, name: "Queue snapshot", signpostID: interval)
+        defer { os_signpost(.end, log: LaunchMetrics.log, name: "Queue snapshot", signpostID: interval) }
         let snapshot = try await worker.snapshot(previousIndices: previousIndices)
         queue = snapshot
         let restored = snapshot.restoredSelection(selection)
@@ -148,17 +152,37 @@ import SwiftData
         var outcome = RefreshOutcome()
         var toCache: [ArticleLink] = []
         do { try await reloadSnapshot() } catch { outcome.errors.append(error.localizedDescription) }
+        let previous = queue.indexByKey
+        var needsSnapshot = false
+        var mayPublishEarly = articles.isEmpty
         for subscription in subscriptions {
             do {
                 try Task.checkCancellation()
-                let previous = queue.indexByKey
                 let items = try await service.itemsWithRetry(address: subscription.address, kind: subscription.kind)
-                let links = try await worker.importItems(items, subscriptionID: subscription.id)
-                outcome.newArticles += try await reloadSnapshot(previousIndices: previous)
+                needsSnapshot = true
+                let links: [ArticleLink]
+                do {
+                    let interval = OSSignpostID(log: LaunchMetrics.log)
+                    os_signpost(.begin, log: LaunchMetrics.log, name: "Feed import", signpostID: interval)
+                    defer { os_signpost(.end, log: LaunchMetrics.log, name: "Feed import", signpostID: interval) }
+                    links = try await worker.importItems(items, subscriptionID: subscription.id)
+                }
                 toCache.append(contentsOf: links)
-            } catch is CancellationError { return }
+                // Populate an empty reader promptly. Otherwise keep the current
+                // article stable until imports for this refresh have finished.
+                if mayPublishEarly && !links.isEmpty {
+                    outcome.newArticles = try await reloadSnapshot(previousIndices: previous)
+                    needsSnapshot = false
+                    mayPublishEarly = false
+                }
+            } catch is CancellationError { break }
             catch { outcome.errors.append("\(subscription.name): \(error.localizedDescription)") }
         }
+        if needsSnapshot {
+            do { outcome.newArticles = try await reloadSnapshot(previousIndices: previous) }
+            catch { outcome.errors.append(error.localizedDescription) }
+        }
+        guard !Task.isCancelled else { return }
         updateFailed = outcome.failed; updateMessage = outcome.message
         // Optional media failures do not turn a successful feed update red.
         // Cache work is lower priority and never gates initial article display.

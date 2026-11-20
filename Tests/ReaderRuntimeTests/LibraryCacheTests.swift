@@ -96,6 +96,30 @@ final class LibraryCacheTests: XCTestCase {
         let snapshot = try await worker.snapshot()
         XCTAssertEqual(snapshot.articles.map(\.key), [link.key])
     }
+    @MainActor func testOverlappingFeedImportsAcrossBatchesPreserveEnrichmentAndQueueCounts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = MediaCache(directory: root, limitBytes: 64 * 1024)
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let feed = Subscription(name: "Example", address: "https://example.com/rss", kind: "rss")
+        context.insert(feed)
+        try context.save()
+        let worker = await Task.detached { LibraryWorker(modelContainer: container) }.value
+        let items = (0..<34).map { item("story-\($0)") }
+        _ = try await worker.importItems(items, subscriptionID: feed.id, cache: cache)
+        let first = try await worker.snapshot()
+        let saved = try XCTUnwrap(first.articles.first)
+        let enriched = CachedArticle(text: "Offline copy", html: "<p>Full story</p>", feedHTML: items[0].html, revision: 42)
+        try await cache.storeArticle(enriched, key: saved.key)
+        _ = try await worker.importItems(items + [item("extra")], subscriptionID: feed.id, cache: cache)
+        let updated = try await worker.snapshot(previousIndices: first.indexByKey)
+        XCTAssertEqual(updated.articles.count, 35)
+        XCTAssertEqual(updated.addedCount, 1)
+        let cached = await cache.article(saved.key)
+        XCTAssertEqual(cached, enriched)
+    }
+
     @MainActor func testMigrationRetainsOfflineBodyWhenReplacementDoesNotFit() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

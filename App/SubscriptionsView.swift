@@ -5,7 +5,7 @@ struct SubscriptionsView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Subscription.created) private var subscriptions: [Subscription]
-    @Query private var articles: [Article]
+    @Query(filter: #Predicate<Article> { $0.queued }) private var queuedArticles: [Article]
     @State private var name = ""
     @State private var address = ""
     @State private var kind = "rss"
@@ -18,6 +18,7 @@ struct SubscriptionsView: View {
         return url.scheme == "https" && url.host != nil
     }
     var body: some View {
+        let queuedCounts = queuedArticles.reduce(into: [UUID: Int]()) { $0[$1.subscriptionID, default: 0] += 1 }
         NavigationStack {
             Form {
                 Section("Your subscriptions") {
@@ -36,7 +37,7 @@ struct SubscriptionsView: View {
                                     .lineLimit(3...8)
                                 Text("Matching phrases are hidden in the reader. Original articles remain available.").font(.caption).foregroundStyle(.secondary)
                             }
-                            let count = articles.filter { $0.subscriptionID == subscription.id && $0.queued }.count
+                            let count = queuedCounts[subscription.id, default: 0]
                             if subscription.paused { Text("Paused · \(count) queued").font(.caption).foregroundStyle(.orange) }
                         }.padding(.vertical, 4)
                     }
@@ -69,13 +70,17 @@ struct SubscriptionsView: View {
         }.frame(minWidth: 320, minHeight: 500)
     }
     private func toggle(_ subscription: Subscription) {
-        subscription.paused.toggle()
-        if !subscription.paused {
-            var position = articles.map(\.queuePosition).max() ?? 0
-            for article in articles.filter({ $0.subscriptionID == subscription.id && $0.queued }).sorted(by: { $0.published < $1.published }) {
-                position += 1; article.queuePosition = position; article.queued = false
-            }
+        if subscription.paused {
+            var latest = FetchDescriptor<Article>(sortBy: [SortDescriptor(\.queuePosition, order: .reverse)])
+            latest.fetchLimit = 1
+            do {
+                var position = try context.fetch(latest).first?.queuePosition ?? 0
+                for article in queuedArticles.filter({ $0.subscriptionID == subscription.id }).sorted(by: { $0.published < $1.published }) {
+                    position += 1; article.queuePosition = position; article.queued = false
+                }
+            } catch { errorMessage = error.localizedDescription; return }
         }
+        subscription.paused.toggle()
         save()
     }
     private func save() { do { try context.save() } catch { errorMessage = error.localizedDescription } }
