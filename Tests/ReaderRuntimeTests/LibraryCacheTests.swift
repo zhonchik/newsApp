@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 import SwiftData
 import ReaderContent
 @testable import ReaderRuntime
@@ -117,17 +118,32 @@ final class LibraryCacheTests: XCTestCase {
         let subscription = Subscription(name: "Feed", address: "test", kind: "rss")
         let article = Article(item: item("formatted"), subscription: subscription)
         let link = ArticleLink(article, hiddenText: "")
-        let content = CachedArticle(text: "", html: "<p>First secret</p><img src='https://example.com/image.jpg'>", feedHTML: "")
+        let image = "https://example.com/image.jpg"
+        let paragraphs = String(repeating: "<p>First <strong>secret</strong> paragraph.</p>", count: 200)
+        let content = CachedArticle(text: "", html: paragraphs + "<img src='\(image)'>", feedHTML: "")
         let doc = ReaderDocument(link, content: content)
         let writer = MediaCache(directory: root)
+        let coldStart = ProcessInfo.processInfo.systemUptime
         let first = try await writer.formattedBody(doc, hiddenText: "")
+        let coldMS = Int((ProcessInfo.processInfo.systemUptime - coldStart) * 1000)
         XCTAssertFalse(first.reused)
         XCTAssertTrue(first.html.contains("data-reader-src"))
         try await writer.saveFormattedBody()
         let reader = MediaCache(directory: root)
+        let warmStart = ProcessInfo.processInfo.systemUptime
         let next = try await reader.formattedBody(doc, hiddenText: "")
+        let warmMS = Int((ProcessInfo.processInfo.systemUptime - warmStart) * 1000)
+        print("Formatted article body (200 paragraphs): built \(coldMS) ms, restored \(warmMS) ms")
         XCTAssertTrue(next.reused)
         XCTAssertEqual(next.html, first.html)
+        let name = SHA256.hash(data: Data(image.utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = root.appendingPathComponent(name)
+        try Data([1]).write(to: file)
+        try JSONEncoder().encode(MediaCache.Entry(file: file, mime: "image/jpeg", size: 1)).write(to: file.appendingPathExtension("json"))
+        let localImage = try await reader.formattedBody(doc, hiddenText: "")
+        XCTAssertFalse(localImage.reused)
+        XCTAssertFalse(localImage.html.contains("data-reader-src"))
+        XCTAssertTrue(localImage.html.contains("src=\"reader-media:"))
         let filtered = try await reader.formattedBody(doc, hiddenText: "secret")
         XCTAssertFalse(filtered.reused)
         XCTAssertFalse(filtered.html.contains("secret"))
