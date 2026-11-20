@@ -50,7 +50,7 @@ import SwiftData
         return context
     }
     /// Read only the saved article on upgrade, before queue scans or migration.
-    func launchDocument(cache: MediaCache = .shared) async throws -> ReaderDocument? {
+    func launchDocument(restored: ReaderDocument? = nil, cache: MediaCache = .shared) async throws -> ReaderDocument? {
         let context = freshContext()
         var positions = FetchDescriptor<ReadingPosition>(sortBy: [SortDescriptor(\.changed, order: .reverse)])
         positions.fetchLimit = 1
@@ -61,6 +61,10 @@ import SwiftData
         let subscriptionID = article.subscriptionID
         let subscription = try context.fetch(FetchDescriptor<Subscription>(predicate: #Predicate { $0.id == subscriptionID })).first
         let link = ArticleLink(article, hiddenText: subscription?.hiddenText ?? "")
+        if let restored, restored.key == key {
+            let body = CachedArticle(text: restored.text, html: restored.html, feedHTML: restored.feedHTML)
+            return ReaderDocument(link, content: body)
+        }
         if let cached = await cache.article(link.key) { return ReaderDocument(link, content: cached) }
         if !article.text.isEmpty || !article.html.isEmpty || !article.feedHTML.isEmpty {
             return ReaderDocument(link, content: CachedArticle(text: article.text, html: article.html, feedHTML: article.feedHTML, revision: article.contentRevision))

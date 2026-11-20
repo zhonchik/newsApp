@@ -2,11 +2,14 @@ import SwiftUI
 import SwiftData
 import os
 
+enum LaunchMetrics {
+    static let log = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "Current", category: .pointsOfInterest)
+}
+
 @MainActor final class LibraryContainer: ObservableObject {
     static let shared = LibraryContainer()
     @Published var container: ModelContainer?
     @Published var launchDocument: ReaderDocument?
-    @Published var preview: LaunchPreview?
     @Published var error: String?
     private var opening = false
     private var store: Task<LibraryWorker, Error>?
@@ -35,13 +38,13 @@ import os
         guard container == nil, !opening else { return }
         opening = true; error = nil
         defer { opening = false }
-        preview = LaunchPreview.saved()
+        async let openingWorker = worker()
         let id = OSSignpostID(log: LaunchMetrics.log)
         os_signpost(.begin, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
         launchDocument = await MediaCache.shared.launchDocument()
         os_signpost(.end, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
         do {
-            let library = try await worker()
+            let library = try await openingWorker
             container = library.modelContainer
         } catch { self.error = error.localizedDescription }
     }

@@ -38,7 +38,7 @@ import SwiftData
             let background = try await library.worker()
             worker = background
             // Publish the saved body before any all-library scan or migration.
-            if let cached = try await background.launchDocument() {
+            if let cached = try await background.launchDocument(restored: library.launchDocument) {
                 document = cached; selection = cached.key
             }
             try await reloadSnapshot()

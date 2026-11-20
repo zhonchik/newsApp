@@ -31,6 +31,8 @@ final class LibraryCacheTests: XCTestCase {
         let subscription = Subscription(name: "Feed", address: "https://example.com/feed", kind: "rss")
         context.insert(subscription)
         let article = Article(item: item("upgrade"), subscription: subscription)
+        article.html = "<figure><img src='https://example.com/original.jpg'></figure>"
+        article.feedHTML = "<video src='https://example.com/clip.mp4'></video>"
         context.insert(article)
         context.insert(ReadingPosition(articleKey: article.key))
         try context.save()
@@ -38,6 +40,10 @@ final class LibraryCacheTests: XCTestCase {
         let launch = try await worker.launchDocument(cache: cache)
         XCTAssertEqual(launch?.key, article.key)
         XCTAssertEqual(launch?.text, "Article text")
+        XCTAssertEqual(launch?.html, article.html)
+        XCTAssertEqual(launch?.feedHTML, article.feedHTML)
+        let restored = try await worker.launchDocument(restored: launch, cache: cache)
+        XCTAssertEqual(restored, launch)
         let fresh = ModelContext(container)
         XCTAssertFalse(try XCTUnwrap(fresh.fetch(FetchDescriptor<Article>()).first).html.isEmpty)
         let size = try await cache.usage()
@@ -89,18 +95,6 @@ final class LibraryCacheTests: XCTestCase {
         let snapshot = try await worker.snapshot()
         XCTAssertEqual(snapshot.articles.map(\.key), [link.key])
     }
-    @MainActor func testPreviewFiltersLegacyHTMLAndBoundsSavedText() throws {
-        let feed = Subscription(name: "Feed", address: "test", kind: "telegram")
-        let article = Article(item: item("preview"), subscription: feed)
-        article.url = "https://t.me/test/1"
-        let link = ArticleLink(article, hiddenText: "hide me")
-        let content = CachedArticle(text: "", html: "<p>hide <b>me</b> Keep " + String(repeating: "x", count: 4000) + "</p>", feedHTML: "")
-        let preview = try LaunchPreview.make(from: ReaderDocument(link, content: content), hiddenText: link.hiddenText)
-        XCTAssertTrue(preview.text.hasPrefix("Keep"))
-        XCTAssertEqual(preview.text.count, 2400)
-        XCTAssertTrue(preview.title.isEmpty)
-    }
-
     @MainActor func testMigrationRetainsOfflineBodyWhenReplacementDoesNotFit() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

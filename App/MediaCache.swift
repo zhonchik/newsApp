@@ -97,6 +97,7 @@ actor MediaCache {
         return directory.appendingPathComponent(name)
     }
     private static let lastArticleKey = "lastCachedArticleLink"
+    static func forgetLaunchLink() { UserDefaults.standard.removeObject(forKey: lastArticleKey) }
     func remember(_ link: ArticleLink) throws {
         UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: Self.lastArticleKey)
     }

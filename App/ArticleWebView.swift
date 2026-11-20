@@ -23,7 +23,8 @@ struct ArticleWebView {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
         let fallback = "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
-        let body = (try? ReaderContent.html(body: article.html.isEmpty ? fallback : article.html, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)) ?? fallback
+        let source = article.html.isEmpty && article.text.isEmpty ? article.feedHTML : article.html
+        let body = (try? ReaderContent.html(body: source.isEmpty ? fallback : source, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)) ?? fallback
         let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
         let html = """
         <!doctype html><html data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -164,12 +165,10 @@ struct ArticleWebView {
                 self.recover(webView)
             }
         }
-        // A navigation commit is too early: keep Preparing visible until the
-        // page's animation-frame callback confirms it has reached rendering.
+        // Confirm actual layout before recording the first readable article.
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard navigation === activeNavigation else { return }
-            // Animation-frame callbacks can be throttled while the loading overlay
-            // covers WebKit. Confirm usable DOM/layout as a second readiness path.
+            // Confirm usable layout if WebKit throttles animation-frame callbacks.
             webView.evaluateJavaScript("document.readyState === 'complete' && !!document.body && document.body.getBoundingClientRect().height > 0", in: nil, in: .defaultClient) { [weak self, weak webView] result in
                 guard let self, navigation === self.activeNavigation else { return }
                 if case .success(let value) = result, value as? Bool == true {
