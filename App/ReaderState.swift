@@ -30,13 +30,13 @@ import SwiftData
     var current: ArticleLink? { articles.first { $0.key == selection } }
     var unreadCount: Int { articles.filter { !$0.read }.count }
 
-    func start(container: ModelContainer) async {
+    func start(library: LibraryContainer) async {
         guard worker == nil, !opening else { return }
         opening = true; starting = true; startupError = nil
         defer { opening = false; starting = false }
-        let background = await Task.detached(priority: .utility) { LibraryWorker(modelContainer: container) }.value
-        worker = background
         do {
+            let background = try await library.worker()
+            worker = background
             // Publish the saved body before any all-library scan or migration.
             if let cached = try await background.launchDocument() {
                 document = cached; selection = cached.key
@@ -44,7 +44,7 @@ import SwiftData
             try await reloadSnapshot()
             starting = false
             if let current, document?.key == current.key { try? await MediaCache.shared.remember(current) }
-            if firstPageDisplayed || document == nil { beginBackgroundWork() }
+            if firstPageDisplayed || current == nil || articleError != nil { beginBackgroundWork() }
         } catch {
             startupError = error.localizedDescription
             if articles.isEmpty { worker = nil }
@@ -55,7 +55,10 @@ import SwiftData
         firstPageDisplayed = true
         if !starting { beginBackgroundWork() }
     }
-    func pageFailed(_ message: String) { articleError = message }
+    func pageFailed(_ message: String) {
+        articleError = message
+        if !starting { beginBackgroundWork() }
+    }
     func retryPage() { articleError = nil; renderVersion += 1 }
     private func beginBackgroundWork() {
         guard let worker, !backgroundStarted else { return }
@@ -100,7 +103,7 @@ import SwiftData
             try await reloadSnapshot()
             if backgroundStarted, selection == articles.last?.key { await refresh() }
         } catch is CancellationError { }
-        catch { if selection == key { articleError = error.localizedDescription } }
+        catch { if selection == key { pageFailed(error.localizedDescription) } }
     }
     func move(_ offset: Int) {
         guard let index = articles.firstIndex(where: { $0.key == selection }), articles.indices.contains(index + offset) else {

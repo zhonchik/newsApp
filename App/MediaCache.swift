@@ -113,9 +113,23 @@ actor MediaCache {
         return article
     }
     func storeArticle(_ article: CachedArticle, key: String) throws {
+        try writeArticle(article, key: key)
+        try trim()
+    }
+    private func writeArticle(_ article: CachedArticle, key: String) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(article).write(to: articleFile(key), options: .atomic)
+    }
+
+    func migrateBatch(_ bodies: [(String, CachedArticle)]) throws -> Set<String> {
+        for (key, body) in bodies {
+            try Task.checkCancellation()
+            if article(key) == nil { try writeArticle(body, key: key) }
+        }
         try trim()
+        return Set(bodies.compactMap { key, _ in
+            FileManager.default.fileExists(atPath: articleFile(key).path) ? key : nil
+        })
     }
     /// Subscription refresh warms images/posters, never video data.
     func prefetchImages(_ html: String, feed: String = "", baseURL: String, force: Bool = false) async throws {

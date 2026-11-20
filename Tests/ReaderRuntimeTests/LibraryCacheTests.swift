@@ -89,6 +89,34 @@ final class LibraryCacheTests: XCTestCase {
         let snapshot = try await worker.snapshot()
         XCTAssertEqual(snapshot.articles.map(\.key), [link.key])
     }
+    @MainActor func testPreviewFiltersLegacyHTMLAndBoundsSavedText() throws {
+        let feed = Subscription(name: "Feed", address: "test", kind: "telegram")
+        let article = Article(item: item("preview"), subscription: feed)
+        article.url = "https://t.me/test/1"
+        let link = ArticleLink(article, hiddenText: "hide me")
+        let content = CachedArticle(text: "", html: "<p>hide <b>me</b> Keep " + String(repeating: "x", count: 4000) + "</p>", feedHTML: "")
+        let preview = try LaunchPreview.make(from: ReaderDocument(link, content: content), hiddenText: link.hiddenText)
+        XCTAssertTrue(preview.text.hasPrefix("Keep"))
+        XCTAssertEqual(preview.text.count, 2400)
+        XCTAssertTrue(preview.title.isEmpty)
+    }
+
+    @MainActor func testMigrationRetainsOfflineBodyWhenReplacementDoesNotFit() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = MediaCache(directory: root, limitBytes: 8)
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let subscription = Subscription(name: "Feed", address: "test", kind: "rss")
+        context.insert(subscription)
+        context.insert(Article(item: item("large"), subscription: subscription))
+        try context.save()
+        let worker = await Task.detached { LibraryWorker(modelContainer: container) }.value
+        try await worker.migrateContent(cache: cache)
+        let restored = try ModelContext(container).fetch(FetchDescriptor<Article>())
+        XCTAssertEqual(restored.first?.text, "Article text")
+    }
+
     @MainActor private func makeContainer() throws -> ModelContainer {
         let schema = Schema([Article.self, Subscription.self, ReadingPosition.self])
         return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)])

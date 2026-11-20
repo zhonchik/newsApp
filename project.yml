@@ -39,7 +39,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.currentreader.Current
-        INFOPLIST_KEY_UIBackgroundModes: [remote-notification]
+        "INFOPLIST_FILE[sdk=iphone*]": Configuration/Current-iOS.plist
     entitlements:
       path: Configuration/Current.entitlements
       properties:
@@ -54,6 +54,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.currentreader.Current.local
+        "INFOPLIST_FILE[sdk=iphone*]": Configuration/CurrentLocal-iOS.plist
         INFOPLIST_KEY_CFBundleDisplayName: Current Local
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) LOCAL_ONLY
     entitlements:

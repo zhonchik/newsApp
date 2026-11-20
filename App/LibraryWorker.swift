@@ -95,19 +95,40 @@ import SwiftData
     }
     /// Upgrade old installations without dropping the only offline copy first.
     func migrateContent(key: String? = nil, cache: MediaCache = .shared) async throws {
-        let context = freshContext()
-        let articles: [Article]
-        if let key { articles = try context.fetch(FetchDescriptor<Article>(predicate: #Predicate { $0.key == key })) }
-        else { articles = try context.fetch(FetchDescriptor<Article>()) }
-        for article in articles where !article.html.isEmpty || !article.text.isEmpty || !article.feedHTML.isEmpty {
+        var after: String?
+        repeat {
             try Task.checkCancellation()
-            if await cache.article(article.key) == nil {
-                try await cache.storeArticle(CachedArticle(text: article.text, html: article.html, feedHTML: article.feedHTML, revision: article.contentRevision), key: article.key)
+            let context = freshContext()
+            var descriptor = FetchDescriptor<Article>(sortBy: [SortDescriptor(\.key)])
+            if let key {
+                descriptor.predicate = #Predicate { $0.key == key && ($0.html != "" || $0.text != "" || $0.feedHTML != "") }
+            } else if let after {
+                descriptor.predicate = #Predicate {
+                    $0.key > after && ($0.html != "" || $0.text != "" || $0.feedHTML != "")
+                }
+            } else {
+                descriptor.predicate = #Predicate { $0.html != "" || $0.text != "" || $0.feedHTML != "" }
             }
-            article.text = ""; article.html = ""; article.feedHTML = ""
+            descriptor.fetchLimit = 16
+            let articles = try context.fetch(descriptor)
+            guard !articles.isEmpty else { return }
+            let bodies = articles.map { ($0.key, CachedArticle(text: $0.text, html: $0.html, feedHTML: $0.feedHTML, revision: $0.contentRevision)) }
+            let stored = try await cache.migrateBatch(bodies)
+            for article in articles where stored.contains(article.key) {
+                article.text = ""; article.html = ""; article.feedHTML = ""
+            }
             try context.save()
+            after = articles.last?.key
+            await Task.yield()
+        } while key == nil
+    }
+
+    func feedSubscriptions() throws -> [SubscriptionInfo] {
+        try freshContext().fetch(FetchDescriptor<Subscription>()).map {
+            SubscriptionInfo(id: $0.id, name: $0.name, address: $0.address, kind: $0.kind)
         }
     }
+
     func importItems(_ items: [RemoteArticle], subscriptionID: UUID, cache: MediaCache = .shared) async throws -> [ArticleLink] {
         let context = freshContext()
         let active = try context.fetch(FetchDescriptor<Subscription>())

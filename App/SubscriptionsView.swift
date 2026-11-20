@@ -32,7 +32,7 @@ struct SubscriptionsView: View {
                             }
                             Text(subscription.address).font(.caption).foregroundStyle(.secondary)
                             DisclosureGroup("Hide repeated text") {
-                                TextField("One phrase per line", text: Binding(get: { subscription.hiddenText }, set: { subscription.hiddenText = $0; subscription.contentDefaultsApplied = true; save() }), axis: .vertical)
+                                TextField("One phrase per line", text: Binding(get: { subscription.hiddenText }, set: { LaunchPreview.clear(); subscription.hiddenText = $0; subscription.contentDefaultsApplied = true; save() }), axis: .vertical)
                                     .lineLimit(3...8)
                                 Text("Matching phrases are hidden in the reader. Original articles remain available.").font(.caption).foregroundStyle(.secondary)
                             }

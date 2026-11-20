@@ -1,40 +1,68 @@
 import SwiftUI
 import SwiftData
+import os
 
 @MainActor final class LibraryContainer: ObservableObject {
+    static let shared = LibraryContainer()
     @Published var container: ModelContainer?
     @Published var launchDocument: ReaderDocument?
+    @Published var preview: LaunchPreview?
     @Published var error: String?
     private var opening = false
+    private var store: Task<LibraryWorker, Error>?
+
+    func worker() async throws -> LibraryWorker {
+        if let store { return try await store.value }
+        let task = Task.detached(priority: .userInitiated) {
+            let id = OSSignpostID(log: LaunchMetrics.log)
+            os_signpost(.begin, log: LaunchMetrics.log, name: "Open store", signpostID: id)
+            defer { os_signpost(.end, log: LaunchMetrics.log, name: "Open store", signpostID: id) }
+            let schema = Schema([Subscription.self, Article.self, ReadingPosition.self])
+            #if LOCAL_ONLY
+            let config = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
+            #else
+            let config = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
+            #endif
+            let container = try ModelContainer(for: schema, configurations: [config])
+            return LibraryWorker(modelContainer: container)
+        }
+        store = task
+        do { return try await task.value }
+        catch { store = nil; throw error }
+    }
+
     func open() async {
         guard container == nil, !opening else { return }
         opening = true; error = nil
         defer { opening = false }
+        preview = LaunchPreview.saved()
+        let id = OSSignpostID(log: LaunchMetrics.log)
+        os_signpost(.begin, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
+        launchDocument = await MediaCache.shared.launchDocument()
+        os_signpost(.end, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
         do {
-            // This read needs no SwiftData container or migration.
-            launchDocument = await MediaCache.shared.launchDocument()
-            container = try await Task.detached(priority: .userInitiated) {
-                let schema = Schema([Subscription.self, Article.self, ReadingPosition.self])
-                #if LOCAL_ONLY
-                let config = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
-                #else
-                let config = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
-                #endif
-                return try ModelContainer(for: schema, configurations: [config])
-            }.value
+            let library = try await worker()
+            container = library.modelContainer
         } catch { self.error = error.localizedDescription }
     }
 }
 
 @main struct CurrentApp: App {
-    @StateObject private var library = LibraryContainer()
+    @StateObject private var library = LibraryContainer.shared
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(ReaderAppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var phase
+    #endif
     var body: some Scene {
         WindowGroup {
-            // Keep the same reader/WebKit view when the database becomes available.
             ReaderView(library: library)
         }
         #if os(macOS)
         .defaultSize(width: 1000, height: 800)
+        #else
+        .onChange(of: phase) { _, phase in
+            if phase == .background { ReaderAppDelegate.schedule() }
+        }
         #endif
     }
 }
