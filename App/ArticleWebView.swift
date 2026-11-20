@@ -15,7 +15,7 @@ struct ArticleWebView {
 
     @AppStorage("lightText") private var lightText = "#202020"
     @AppStorage("lightBackground") private var lightBackground = "#FFFFFF"
-    @AppStorage("darkText") private var darkText = "#EEEEEE"
+    @AppStorage("darkText") private var darkText = "#DEDCD8"
     @AppStorage("darkBackground") private var darkBackground = "#181818"
 
     nonisolated private static func document(article: ReaderDocument, hiddenText: String, palette: ReaderPalette) async -> String {
@@ -29,21 +29,16 @@ struct ArticleWebView {
         <!doctype html><html data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: reader-media:; media-src https: reader-media:; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
         <style>
-        :root { color-scheme: light dark; font: -apple-system-body; }
-        body { color: \(ReaderPalette.valid(palette.lightText, fallback: "#202020")); background: \(ReaderPalette.valid(palette.lightBackground, fallback: "#FFFFFF")); }
-        @media (prefers-color-scheme: dark) { body { color: \(ReaderPalette.valid(palette.darkText, fallback: "#EEEEEE")); background: \(ReaderPalette.valid(palette.darkBackground, fallback: "#181818")); } }
+        \(ReaderAppearance.stylesheet(palette))
         body { margin:0 auto; padding:0 24px 24px; max-width:680px; overflow-wrap:anywhere; }
-        article { font-family: Georgia, serif; font-size:1.15em; line-height:1.7; }
-        h1 { font-family: Georgia, serif; font-size:1.4em; line-height:1.3; }
-        h2,h3,h4 { line-height:1.3; }
         /* Fill the reader column even when publisher HTML supplies small dimensions. */
         img { display:block; width:100%; max-width:100%; height:auto; border-radius:6px; }
         img[data-reader-original] { width:auto; }
         video, iframe { display:block; width:100%; height:auto; aspect-ratio:16/9; border:0; background:#181818; object-fit:contain; }
         /* Reserve space while loading, then use the photo’s intrinsic proportions. */
         img:not([width][height]) { aspect-ratio:auto 16/9; }
-        figure { margin:1.5em 0; } figcaption,header,footer { font: -apple-system-caption1; color: GrayText; }
-        a { color: #298c81; } blockquote { border-left:3px solid #298c81; margin:1em 0; padding-left:1em; }
+        figure { margin:1.5em 0; } figcaption,header,footer { font: -apple-system-caption1; color: inherit; }
+        a { color: inherit; text-underline-offset:0.16em; } blockquote { border-left:3px solid #298c81; margin:1em 0; padding-left:1em; }
         pre { overflow-x:auto; padding:12px; background:light-dark(#f3f3f3,#252525); } table { display:block; overflow-x:auto; border-collapse:collapse; }
         td,th { border:1px solid GrayText; padding:8px; } footer { margin-top:32px; }
         </style></head><body><header>\(escape(article.source)) · \(escape(article.published.formatted(date: .abbreviated, time: .omitted)))</header>

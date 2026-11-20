@@ -6,7 +6,7 @@ struct ReaderView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("lightText") private var lightText = "#202020"
     @AppStorage("lightBackground") private var lightBackground = "#FFFFFF"
-    @AppStorage("darkText") private var darkText = "#EEEEEE"
+    @AppStorage("darkText") private var darkText = "#DEDCD8"
     @AppStorage("darkBackground") private var darkBackground = "#181818"
     @Environment(\.scenePhase) private var phase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
