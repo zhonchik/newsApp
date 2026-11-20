@@ -75,9 +75,6 @@ struct ReaderView: View {
                             Text(error)
                             Button("Try again") { retryStartup() }
                         }.padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    } else if !reader.selection.isEmpty && document?.key != reader.selection {
-                        ProgressView("Loading article…")
-                            .padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     }
                 }
         } else if let error = reader.articleError ?? reader.startupError ?? library.error {
@@ -93,7 +90,7 @@ struct ReaderView: View {
                 } }
             }
         } else if reader.starting || reader.current != nil {
-            ProgressView().accessibilityLabel(reader.current?.title ?? "Opening library")
+            Color.clear.accessibilityHidden(true)
         } else {
             ContentUnavailableView {
                 Label("A little more perspective.", systemImage: "text.page")

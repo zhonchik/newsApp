@@ -32,7 +32,7 @@ struct HybridArticleReader: View {
                         renderVersion: renderVersion, onDisplay: { onDisplay("WebKit") },
                         onFailure: onFailure, reload: reload, move: move)
                 }
-            } else { ProgressView().accessibilityLabel("Opening article") }
+            } else { Color.clear.accessibilityHidden(true) }
         }
         .task(id: input) {
             guard let input, prepared?.input != input else { return }

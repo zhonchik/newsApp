@@ -90,7 +90,7 @@ Device validation: scroll during refresh and preparation with a large library; s
 
 ## Startup, settings, and cache lifecycle
 
-Library opening and SwiftData migration run away from the main actor. The reader receives explicit immutable queue snapshots from the library actor, instead of relying on another context’s query notifications to display the first article. Startup and article loads have visible progress/retry states. WebKit document loads and extraction have bounded recovery paths; WebKit/UI operations remain on the main actor as required by Apple, while network, parsing, cache I/O, and library work use background actors. Actors use Swift’s executor pool, not a dedicated thread per process.
+Library opening and SwiftData migration run away from the main actor. The reader receives explicit immutable queue snapshots from the library actor, instead of relying on another context’s query notifications to display the first article. Failed article loads offer a retry. WebKit document loads and extraction have bounded recovery paths; WebKit/UI operations remain on the main actor as required by Apple, while network, parsing, cache I/O, and library work use background actors. Actors use Swift’s executor pool, not a dedicated thread per process.
 
 Settings has separate **Subscriptions**, **Colors**, and **Cache** tabs. The cache tab shows the measured bytes of the managed text/media cache, lets you choose a 64–8192 MiB limit, and applies eviction when the limit is lowered. Permanent library metadata and YouTube-managed website storage are separate from that figure. Old installations migrate saved bodies into the local cache; article URLs, titles, subscriptions, queue positions, and read history remain in the library even after eviction.
 
