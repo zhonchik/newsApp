@@ -14,6 +14,7 @@ import os
                 MainActor.assumeIsolated { Self.run(task) }
             }
         }
+        if application.applicationState != .background { LibraryContainer.shared.beginRestore() }
         return true
     }
 

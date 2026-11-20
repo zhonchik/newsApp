@@ -23,7 +23,8 @@ enum LaunchMetrics {
 @MainActor final class LibraryContainer: ObservableObject {
     static let shared = LibraryContainer()
     @Published var container: ModelContainer?
-    @Published var launchDocument: ReaderDocument?
+    @Published private(set) var launchPage: ReaderPage?
+    var launchDocument: ReaderDocument? { launchPage?.input.article }
     @Published var error: String?
     private var opening = false
     private var store: Task<LibraryWorker, Error>?
@@ -50,7 +51,7 @@ enum LaunchMetrics {
         catch { store = nil; throw error }
     }
 
-    private var restoreTask: Task<ReaderDocument?, Never>?
+    private var restoreTask: Task<ReaderPage?, Never>?
 
     func beginRestore() {
         guard restoreTask == nil else { return }
@@ -61,18 +62,17 @@ enum LaunchMetrics {
             let doc = await MediaCache.shared.launchDocument()
             os_signpost(.end, log: LaunchMetrics.log, name: "Read launch cache", signpostID: id)
             LaunchMetrics.mark(doc == nil ? "Saved article cache miss" : "Saved article cache hit")
-            // Prepare on the cache actor while SwiftUI and WebKit mount the reader.
-            if let doc {
-                let body = try? await MediaCache.shared.formattedBody(doc, hiddenText: doc.hiddenText)
-                LaunchMetrics.mark(body?.reused == true ? "Formatted launch cache hit" : "Formatted launch cache miss; body prepared")
-            }
-            return doc
+            guard let doc else { return nil }
+            let input = ReaderPage.Input(article: doc, hiddenText: doc.hiddenText, palette: .saved(), version: 0)
+            let page = await ReaderPage.prepare(input)
+            LaunchMetrics.mark(page.reusedBody ? "Launch HTML ready (cached body)" : "Launch HTML ready (new body)")
+            return page
         }
     }
 
     func restore() async {
         beginRestore()
-        launchDocument = await restoreTask?.value
+        launchPage = await restoreTask?.value
         if launchDocument == nil { await open() }
     }
 

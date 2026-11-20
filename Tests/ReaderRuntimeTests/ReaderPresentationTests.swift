@@ -1,15 +1,23 @@
 import AppKit
 import WebKit
 import XCTest
+import ReaderContent
 @testable import ReaderRuntime
 
 final class ReaderPresentationTests: XCTestCase {
     @MainActor func testLocalArticleReachesLayoutWhileImageRequestStalls() async throws {
         let cache = MediaCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
-        let html = try await cache.rewrite("""
-            <html data-reader-key="saved"><body><article>Saved article text
-            <img width="80" height="80" src="https://example.org/photo.jpg"></article></body></html>
-            """)
+        let subscription = Subscription(name: "Example", address: "https://example.org/feed", kind: "rss")
+        let item = RemoteArticle(id: "saved", title: "Saved article", url: "https://example.org/story", text: "", published: Date())
+        let record = Article(item: item, subscription: subscription)
+        record.key = "saved"
+        let content = CachedArticle(text: "", html: "<p>Saved article text</p><img width='80' height='80' src='https://example.org/photo.jpg'>", feedHTML: "")
+        let document = ReaderDocument(ArticleLink(record, hiddenText: ""), content: content)
+        let input = ReaderPage.Input(article: document, hiddenText: "", palette: .saved(), version: 0)
+        let page = await ReaderPage.prepare(input, cache: cache)
+        let html = page.html
+        XCTAssertEqual(page.input, input)
+        XCTAssertTrue(html.contains(ReaderAppearance.stylesheet(input.palette)))
         XCTAssertTrue(html.contains("data-reader-src="))
         XCTAssertFalse(html.contains(" src=\"reader-media:"))
         let ready = expectation(description: "Article reached its presentation frame")

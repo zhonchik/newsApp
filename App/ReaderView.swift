@@ -54,7 +54,7 @@ struct ReaderView: View {
     @ViewBuilder private var content: some View {
         let document = visibleDocument
         if document != nil || (reader.starting && library.error == nil && reader.startupError == nil) {
-            ArticleWebView(article: document, hiddenText: reader.current?.hiddenText ?? document?.hiddenText ?? "", renderVersion: reader.renderVersion, onDisplay: {
+            ArticleWebView(launchPage: reader.starting && reader.document == nil ? library.launchPage : nil, article: document, hiddenText: reader.current?.hiddenText ?? document?.hiddenText ?? "", renderVersion: reader.renderVersion, onDisplay: {
                 guard let document else { return }
                 if !reader.pageVisible {
                     LaunchMetrics.mark("First article layout confirmed", finished: true)
