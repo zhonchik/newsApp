@@ -11,11 +11,10 @@ import SwiftData
     var kind: String = "rss"
     var paused: Bool = false
     var hiddenText: String = ""
-    var contentDefaultsApplied: Bool = false
+    var contentDefaultsApplied: Bool = false // Retained for existing SwiftData stores.
     var created: Date = Date()
     init(name: String, address: String, kind: String) {
         self.name = name; self.address = address; self.kind = kind
-        hiddenText = ContentRules.defaultHiddenText(address: address); contentDefaultsApplied = true
     }
 }
 

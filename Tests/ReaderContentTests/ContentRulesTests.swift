@@ -2,73 +2,38 @@ import XCTest
 @testable import ReaderContent
 
 final class ContentRulesTests: XCTestCase {
-    func testNPlusOneSelectsOnlyFirstArticle() throws {
-        let page = "<header>Menu</header><section data-heading-wrap><div class='n1_material'><p>Requested article</p><img src='/photo.jpg'></div><div class='n1_material'><p>Final paragraph</p></div></section><section><div class='n1_material'><p>Another article</p></div></section>"
-        let result = try XCTUnwrap(ContentRules.articleBody(page: page, url: "https://nplus1.ru/news/story"))
-        XCTAssertTrue(result.contains("Requested article"))
-        XCTAssertTrue(result.contains("Final paragraph"))
-        XCTAssertTrue(result.contains("https://nplus1.ru/photo.jpg"))
-        XCTAssertFalse(result.contains("Another article"))
-        XCTAssertFalse(result.contains("Menu"))
-    }
-
-    func testNPlusOneKeepsDefinitionsWithTheirInlineTerms() throws {
-        let url = "https://nplus1.ru/news/story"
-        let page = """
-        <section data-heading-wrap><div class="n1_material">
-        <p>Перед <app-note text="миоклонус"><template v-slot:content><div class="n1_material"><p>Краткое сокращение <em>мышц</em>.</p></div></template></app-note>, после.
-        <app-note text="ВИП"><template v-slot:content><div class="n1_material"><p>Пептид.</p></div></template></app-note>.
-        <app-note text="Слово"></app-note>.</p>
-        </div></section>
+    func testDefinitionsStayAttachedToTheirInlineTerms() throws {
+        let body = """
+        <p>Before <dfn title="A short muscle contraction.">twitch</dfn>, after.
+        <dfn title="A short chain of amino acids." onclick="alert(1)">peptide</dfn>.
+        <dfn>Word</dfn>.</p>
         """
-        let body = try XCTUnwrap(ContentRules.articleBody(page: page, url: url))
-        let result = try ReaderContent.html(body: body, feed: "", baseURL: url)
+        for url in ["https://publisher.example/story", "https://another.example/article"] {
+            let result = try ReaderContent.html(body: body, feed: "", baseURL: url)
+            XCTAssertTrue(result.contains("Before <button type=\"button\" popovertarget=\"reader-definition-0\">twitch</button>"))
+            XCTAssertTrue(result.contains("A short muscle contraction.</span>, after."))
+            XCTAssertTrue(result.contains("popovertarget=\"reader-definition-1\">peptide</button>"))
+            XCTAssertTrue(result.contains("id=\"reader-definition-1\" popover=\"auto\" role=\"note\" aria-label=\"peptide\">A short chain of amino acids.</span>"))
+            XCTAssertTrue(result.contains("<dfn>Word</dfn>."))
+            XCTAssertEqual(result.components(separatedBy: "A short muscle contraction.").count, 2)
+            XCTAssertFalse(result.contains("onclick"))
+        }
+    }
 
-        XCTAssertTrue(result.contains("Перед <button type=\"button\" popovertarget=\"reader-definition-0\">миоклонус</button>"))
-        XCTAssertTrue(result.contains("id=\"reader-definition-0\" popover=\"auto\" role=\"note\" aria-label=\"миоклонус\">Краткое сокращение мышц.</span>, после."))
-        XCTAssertTrue(result.contains("popovertarget=\"reader-definition-1\">ВИП</button>"))
-        XCTAssertTrue(result.contains("id=\"reader-definition-1\" popover=\"auto\" role=\"note\" aria-label=\"ВИП\">Пептид.</span>"))
-        XCTAssertTrue(result.contains("Слово."))
-        XCTAssertEqual(result.components(separatedBy: "Краткое сокращение").count, 2)
-        XCTAssertEqual(result.components(separatedBy: "Пептид.").count, 2)
-        XCTAssertFalse(result.contains("<app-note"))
-        XCTAssertFalse(result.contains("<template"))
-    }
-    func testMacRumorsExcludesPopularStories() throws {
-        let page = "<article><div class='js-content'><p>Story</p></div></article><h2>Popular Stories</h2><p>Unrelated</p>"
-        let result = try XCTUnwrap(ContentRules.articleBody(page: page, url: "https://www.macrumors.com/story"))
-        XCTAssertTrue(result.contains("Story"))
-        XCTAssertFalse(result.contains("Popular Stories"))
-        XCTAssertFalse(result.contains("Unrelated"))
-    }
-    func testCachedMacRumorsContentIsCleaned() throws {
-        let result = try ReaderContent.html(body: "<p>Story</p><h2>Popular Stories</h2><p>Unrelated</p>", feed: "", baseURL: "https://www.macrumors.com/story")
-        XCTAssertTrue(result.contains("Story"))
-        XCTAssertFalse(result.contains("Unrelated"))
-    }
-    func testF1NewsExcludesFooterAndAdjacentStories() throws {
-        let page = "<article class='post'><div class='post_content'><p>Story</p></div><footer>Нашли опечатку?<nav class='post_more'>Следующая новость</nav></footer></article>"
-        let result = try XCTUnwrap(ContentRules.articleBody(page: page, url: "https://www.f1news.ru/news/story"))
-        XCTAssertTrue(result.contains("Story"))
-        XCTAssertFalse(result.contains("опечатку"))
-        XCTAssertFalse(result.contains("Следующая"))
-    }
     func testHiddenPhraseAcrossInlineTagsPreservesFormatting() throws {
-        let body = "<p>НАСТОЯЩИЙ МАТЕРИАЛ <b>ПРОИЗВЕДЕН ИНОСТРАННЫМ АГЕНТОМ</b> ГАЛЛЯМОВЫМ АББАСОМ РАДИКОВИЧЕМ. 18+</p><p><strong>Actual post</strong> with <a href='https://example.com'>link</a>.</p>"
-        let result = try ReaderContent.html(body: body, feed: "", baseURL: "https://t.me/abbasgallyamovpolitics/42", hiddenText: ContentRules.telegramNotice)
-        XCTAssertFalse(result.contains("НАСТОЯЩИЙ"))
-        XCTAssertFalse(result.contains("18+"))
+        let body = "<p>REPEATED <b>SUBSCRIPTION</b> NOTICE.</p><p><strong>Actual post</strong> with <a href='https://example.com'>link</a>.</p>"
+        let result = try ReaderContent.html(body: body, feed: "", baseURL: "https://example.com/article", hiddenText: "Repeated subscription notice.")
+        XCTAssertFalse(result.contains("REPEATED"))
+        XCTAssertFalse(result.contains("NOTICE"))
         XCTAssertTrue(result.contains("<strong>Actual post</strong>"))
         XCTAssertTrue(result.contains("https://example.com"))
     }
+
     func testEmptyFilterKeepsOriginalText() throws {
-        let result = try ReaderContent.html(body: "<p>Keep this notice</p>", feed: "", baseURL: "https://t.me/other/42")
+        let result = try ReaderContent.html(body: "<p>Keep this notice</p>", feed: "", baseURL: "https://example.com/article", hiddenText: "")
         XCTAssertTrue(result.contains("Keep this notice"))
-        XCTAssertEqual(ContentRules.defaultHiddenText(address: "@other"), "")
     }
-    func testUnrecognizedLayoutFallsBackToReadability() throws {
-        XCTAssertNil(try ContentRules.articleBody(page: "<p>Unknown layout</p>", url: "https://nplus1.ru/news/story"))
-    }
+
     func testTelegramHeadlinePolicy() {
         XCTAssertTrue(ContentRules.isTelegram("https://t.me/channel/42"))
         XCTAssertFalse(ContentRules.isTelegram("https://example.com/story"))

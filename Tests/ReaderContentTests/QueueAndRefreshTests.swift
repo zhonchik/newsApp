@@ -43,9 +43,9 @@ final class QueueAndRefreshTests: XCTestCase {
         XCTAssertTrue(result.contains("data-reader-original"))
         XCTAssertTrue(result.contains("Story"))
     }
-    func testNPlusOneAdsRemovedWithoutRemovingArticleText() throws {
-        let body = "<p>Story discusses advertising.</p><div class='advertisement'><img src='https://example.com/ad.jpg'>Advertisement</div><a id='adv-banner-link-text' href='https://example.com'>Buy this</a><p>Last paragraph</p>"
-        let result = try ReaderContent.html(body: body, feed: "", baseURL: "https://nplus1.ru/news/story")
+    func testAdsRemovedWithoutRemovingArticleText() throws {
+        let body = "<p>Story discusses advertising.</p><div class='advertisement'><img src='https://example.com/ad.jpg'>Advertisement</div><a data-ad='true' href='https://example.com'>Buy this</a><p>Last paragraph</p>"
+        let result = try ReaderContent.html(body: body, feed: "", baseURL: "https://publisher.example/news/story")
         XCTAssertFalse(result.contains("ad.jpg"))
         XCTAssertFalse(result.contains("Buy this"))
         XCTAssertTrue(result.contains("Story discusses advertising"))

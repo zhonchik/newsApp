@@ -16,12 +16,12 @@ public enum MediaURL {
         }
     }
 
-    /// Repair the exact duplicated-origin defect present in F1News RSS images.
-    /// Do not strip nested URLs in valid paths/queries or guess at other hosts.
+    /// Repair a repeated HTTPS origin at the start of a URL.
     public static func resolve(_ raw: String, baseURL: String? = nil) -> String? {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let origin = "https://c.f1news.ru"
-        if value.hasPrefix(origin + origin + "/") { value.removeFirst(origin.count) }
+        if let duplicate = value.range(of: #"^(https://[A-Za-z0-9.-]+(?::[0-9]+)?)(?=\1/)"#, options: .regularExpression) {
+            value.removeSubrange(duplicate)
+        }
         guard !value.isEmpty,
               let absolute = URL(string: value, relativeTo: baseURL.flatMap(URL.init(string:)))?.absoluteURL,
               var parts = URLComponents(url: absolute, resolvingAgainstBaseURL: true),

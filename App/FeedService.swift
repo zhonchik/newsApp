@@ -57,11 +57,29 @@ actor FeedService {
             guard !html.isEmpty else { throw URLError(.cannotParseResponse) }
             return html
         }
-        if let body = try ContentRules.articleBody(page: page, url: url) { return body }
         guard let resource = Bundle.main.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
         let library = try String(contentsOf: resource, encoding: .utf8)
         let encoded = String(data: try JSONSerialization.data(withJSONObject: [page]), encoding: .utf8)!
-        let script = library + "\nconst doc = new DOMParser().parseFromString(\(encoded)[0], 'text/html'); const base = doc.createElement('base'); base.href = document.baseURI; doc.head.appendChild(base); new Readability(doc).parse()?.content || '';"
+        let script = library + """
+
+        const doc = new DOMParser().parseFromString(\(encoded)[0], 'text/html');
+        const base = doc.createElement('base');
+        base.href = document.baseURI;
+        doc.head.appendChild(base);
+        // Keep inline labels and inert definitions together through extraction.
+        for (const template of doc.querySelectorAll('template')) {
+          const component = template.parentElement;
+          const label = component?.getAttribute('text')?.trim();
+          if (!label || !component.localName.includes('-')) continue;
+          const definition = doc.createElement('dfn');
+          definition.textContent = label;
+          definition.title = template.content.textContent.trim();
+          component.replaceWith(definition);
+        }
+        const main = doc.querySelector('main, [role="main"], article');
+        const imageFallback = main?.querySelector('img') ? main.innerHTML : '';
+        new Readability(doc).parse()?.content || imageFallback;
+        """
         let extractor = await ArticleExtractor()
         return try await extractor.extract(script: script, url: url)
     }

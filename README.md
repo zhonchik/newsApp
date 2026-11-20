@@ -64,9 +64,7 @@ The existing repository license is preserved. Mozilla Readability and SwiftSoup 
 
 Use the fast-forward toolbar button (Go to first unread) to return to the oldest unread position in the queue. Subscription deletion requires tapping the trash button and confirming; saved articles remain. Subscriptions → Hide repeated text configures phrases hidden from a subscription's reader view.
 
-Articles are prepared sequentially in the background while the app is active, prioritizing the selected story and unread queue. Selecting a story immediately displays cached content without a network wait. If preparation has not finished yet, the feed content remains on screen; the prepared full text is available on reopening. Background preparation does not replace a page mid-read. Read articles always precede unread articles, with read history ordered by when articles were opened and unread stories ordered by arrival. Images without dimensions reserve space to reduce layout movement. N+1 ad containers are removed while ordinary article text mentioning advertising remains.
-
-F1News gallery pages use a dedicated image-grid extractor, with full-size publisher images and a link to additional gallery pages. The repeated-text filter for @abbasgallyamovpolitics matches both the original notice and the “И РАСПРОСТРАНЕН” variant; existing default filters are upgraded automatically, while cleared/custom filters remain user-controlled.
+Articles are prepared sequentially in the background while the app is active, prioritizing the selected story and unread queue. Selecting a story immediately displays cached content without a network wait. If preparation has not finished yet, the feed content remains on screen; the prepared full text is available on reopening. Older extracted articles refresh after opening when the reader format changes. Read articles always precede unread articles, with read history ordered by when articles were opened and unread stories ordered by arrival. Images without dimensions reserve space to reduce layout movement. Marked ad containers are removed while ordinary article text mentioning advertising remains. Tap or click a marked glossary term to open its definition.
 
 ## Reader performance, video previews and colors
 
@@ -101,8 +99,6 @@ The unread count fades while updates run, turns soft red if an update fails, and
 Validation now includes SwiftData runtime tests for startup snapshots and migration/eviction retaining article links, as well as content-cache serialization and eviction policy tests. Physical-device startup after upgrade, pull-to-refresh, playback-triggered caching, and scroll performance still require device validation.
 
 Startup first reads the last article’s cache without opening the database. On upgrades from older versions, a single-record database read can display the legacy saved body before migration. The reader view stays mounted as the database opens, and maintenance/refresh is deferred until its first page commits. A successful update with zero new articles is explicitly successful; optional image/full-text prefetch failures no longer color the unread count red. Red indicates a feed fetch/import failure or a failed explicit article reload.
-
-F1News RSS image URLs with the known duplicated `https://c.f1news.ru` origin are normalized before rendering and prefetching, including already-saved HTML.
 
 
 The reader starts looking up the saved article as its window is created. It reuses the last formatted article body when the content, filters, and cached media still match. A cache hit lets the reader display the article before opening the store and loading the queue. Cached articles and legacy SwiftData bodies open in the regular WebKit reader, with the same stylesheet, media handling and text filters as subsequent articles. Legacy body migration runs in batches after the reader becomes usable and can resume during an iOS background processing task.
