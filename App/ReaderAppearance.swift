@@ -1,3 +1,21 @@
+import Foundation
+
+struct ReaderPalette: Sendable, Equatable {
+    let lightText: String
+    let lightBackground: String
+    let darkText: String
+    let darkBackground: String
+    static func saved(in defaults: UserDefaults = .standard) -> Self {
+        Self(lightText: defaults.string(forKey: "lightText") ?? "#202020",
+             lightBackground: defaults.string(forKey: "lightBackground") ?? "#FFFFFF",
+             darkText: defaults.string(forKey: "darkText") ?? "#DEDCD8",
+             darkBackground: defaults.string(forKey: "darkBackground") ?? "#181818")
+    }
+    static func valid(_ value: String, fallback: String) -> String {
+        value.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression) == nil ? fallback : value
+    }
+}
+
 enum ReaderAppearance {
     static func stylesheet(_ palette: ReaderPalette) -> String {
         """

@@ -1,15 +1,5 @@
 import SwiftUI
 
-struct ReaderPalette: Sendable, Equatable {
-    let lightText: String
-    let lightBackground: String
-    let darkText: String
-    let darkBackground: String
-    static func valid(_ value: String, fallback: String) -> String {
-        value.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression) == nil ? fallback : value
-    }
-}
-
 struct ThemeSettings: View {
     @AppStorage("lightText") private var lightText = "#202020"
     @AppStorage("lightBackground") private var lightBackground = "#FFFFFF"

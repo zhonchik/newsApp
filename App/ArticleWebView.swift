@@ -1,11 +1,11 @@
 import SwiftUI
 import WebKit
-import SwiftSoup
 
 /// A persistent reader document. Only generated YouTube embeds may run provider scripts.
 struct ArticleWebView {
     @Environment(\.colorScheme) private var colorScheme
-    let article: ReaderDocument
+    let launchPage: ReaderPage?
+    let article: ReaderDocument?
     let hiddenText: String
     let renderVersion: Int
     let onDisplay: () -> Void
@@ -18,37 +18,9 @@ struct ArticleWebView {
     @AppStorage("darkText") private var darkText = "#DEDCD8"
     @AppStorage("darkBackground") private var darkBackground = "#181818"
 
-    nonisolated private static func document(article: ReaderDocument, hiddenText: String, palette: ReaderPalette) async -> String {
-        func escape(_ text: String) -> String {
-            text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;")
-        }
-        let fallback = "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
-        let body = (try? ReaderContent.html(body: article.html.isEmpty ? fallback : article.html, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)) ?? fallback
-        let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
-        let html = """
-        <!doctype html><html data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: reader-media:; media-src https: reader-media:; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
-        <style>
-        \(ReaderAppearance.stylesheet(palette))
-        body { margin:0 auto; padding:0 24px 24px; max-width:680px; overflow-wrap:anywhere; }
-        /* Fill the reader column even when publisher HTML supplies small dimensions. */
-        img { display:block; width:100%; max-width:100%; height:auto; border-radius:6px; }
-        img[data-reader-original] { width:auto; }
-        video, iframe { display:block; width:100%; height:auto; aspect-ratio:16/9; border:0; background:#181818; object-fit:contain; }
-        /* Reserve space while loading, then use the photo’s intrinsic proportions. */
-        img:not([width][height]) { aspect-ratio:auto 16/9; }
-        figure { margin:1.5em 0; } figcaption,header,footer { font: -apple-system-caption1; color: inherit; }
-        a { color: inherit; text-underline-offset:0.16em; } blockquote { border-left:3px solid #298c81; margin:1em 0; padding-left:1em; }
-        pre { overflow-x:auto; padding:12px; background:light-dark(#f3f3f3,#252525); } table { display:block; overflow-x:auto; border-collapse:collapse; }
-        td,th { border:1px solid GrayText; padding:8px; } footer { margin-top:32px; }
-        </style></head><body><header>\(escape(article.source)) · \(escape(article.published.formatted(date: .abbreviated, time: .omitted)))</header>
-        \(headline)<article>\(body)</article>
-        <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
-        """
-        return (try? await MediaCache.shared.rewrite(html)) ?? html
-    }
     @MainActor func makeCoordinator() -> Coordinator { Coordinator(move: move, reload: reload, onDisplay: onDisplay, onFailure: onFailure) }
     @MainActor func makeWebView(_ coordinator: Coordinator) -> ReaderWebView {
+        LaunchMetrics.mark("Reader WebKit creation started")
         let config = WKWebViewConfiguration()
         // The parent CSP blocks scripts; only the allowlisted YouTube frame runs JS.
         config.defaultWebpagePreferences.allowsContentJavaScript = true
@@ -56,9 +28,7 @@ struct ArticleWebView {
         config.setURLSchemeHandler(MediaSchemeHandler(), forURLScheme: "reader-media")
         // Isolated app script: publisher scripts remain blocked by the document CSP.
         let playbackScript = """
-        requestAnimationFrame(function() { requestAnimationFrame(function() {
-          window.webkit.messageHandlers.readerReady.postMessage(document.documentElement.getAttribute('data-reader-key') || '');
-        }); });
+        \(ReaderPresentation.afterFirstFrame)
         document.addEventListener('play', function(event) {
           if (event.target.tagName === 'VIDEO') {
             window.webkit.messageHandlers.cacheVideo.postMessage(event.target.currentSrc || event.target.src);
@@ -99,25 +69,27 @@ struct ArticleWebView {
             gesture.direction = direction; gesture.delegate = coordinator; webView.addGestureRecognizer(gesture)
         }
         #endif
+        LaunchMetrics.mark("Reader WebKit created")
         return webView
     }
     @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
         coordinator.move = move; coordinator.reload = reload; coordinator.onDisplay = onDisplay; coordinator.onFailure = onFailure; webView.move = move
         applyBackground(webView)
+        guard let article else { return }
         let palette = ReaderPalette(lightText: lightText, lightBackground: lightBackground, darkText: darkText, darkBackground: darkBackground)
-        let input = RenderInput(article: article, hiddenText: hiddenText, palette: palette, version: renderVersion)
+        let input = ReaderPage.Input(article: article, hiddenText: hiddenText, palette: palette, version: renderVersion)
         guard coordinator.input != input else { return }
         coordinator.input = input
         coordinator.renderTask?.cancel()
         webView.beginLoading()
+        if let launchPage, launchPage.input == input {
+            coordinator.show(launchPage, in: webView)
+            return
+        }
         coordinator.renderTask = Task { @MainActor [weak webView, weak coordinator] in
-            let html = await Task.detached(priority: .userInitiated) {
-                await Self.document(article: input.article, hiddenText: input.hiddenText, palette: input.palette)
-            }.value
-            guard !Task.isCancelled, let coordinator, coordinator.input == input else { return }
-            // A stable HTTPS base supplies the Referer required by YouTube embeds.
-            coordinator.lastHTML = html; coordinator.recoveries = 0
-            if let webView { coordinator.load(html, in: webView) }
+            let page = await ReaderPage.prepare(input)
+            guard !Task.isCancelled, let webView, let coordinator, coordinator.input == input else { return }
+            coordinator.show(page, in: webView)
         }
     }
     @MainActor private func applyBackground(_ webView: ReaderWebView) {
@@ -133,12 +105,6 @@ struct ArticleWebView {
         webView.underPageBackgroundColor = NSColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
         #endif
     }
-    struct RenderInput: Equatable, Sendable {
-        let article: ReaderDocument
-        let hiddenText: String
-        let palette: ReaderPalette
-        let version: Int
-    }
     @MainActor class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var move: (Int) -> Void
         var reload: () async -> Void
@@ -149,27 +115,41 @@ struct ArticleWebView {
         private var refreshing = false
         private var loadTimeout: Task<Void, Never>?
         private var activeNavigation: WKNavigation?
-        var input: RenderInput?
+        var input: ReaderPage.Input?
         var renderTask: Task<Void, Never>?
         deinit { renderTask?.cancel(); loadTimeout?.cancel() }
         init(move: @escaping (Int) -> Void, reload: @escaping () async -> Void, onDisplay: @escaping () -> Void, onFailure: @escaping (String) -> Void) {
             self.move = move; self.reload = reload; self.onDisplay = onDisplay; self.onFailure = onFailure
         }
+        func show(_ page: ReaderPage, in webView: ReaderWebView) {
+            lastHTML = page.html
+            recoveries = 0
+            load(page.html, in: webView)
+        }
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard navigation === activeNavigation else { return }
+            LaunchMetrics.mark("Article provisional navigation started")
+        }
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            guard navigation === activeNavigation else { return }
+            LaunchMetrics.mark("Article navigation committed")
+        }
         func load(_ html: String, in webView: ReaderWebView) {
+            LaunchMetrics.mark("Article navigation started")
             activeNavigation = webView.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
+            LaunchMetrics.mark("Article navigation submitted")
             loadTimeout?.cancel()
             loadTimeout = Task { @MainActor [weak self, weak webView] in
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
                 guard let self, let webView else { return }
+                LaunchMetrics.mark("15-second WebKit recovery timer fired")
                 self.recover(webView)
             }
         }
-        // A navigation commit is too early: keep Preparing visible until the
-        // page's animation-frame callback confirms it has reached rendering.
+        // Confirm actual layout before recording the first readable article.
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard navigation === activeNavigation else { return }
-            // Animation-frame callbacks can be throttled while the loading overlay
-            // covers WebKit. Confirm usable DOM/layout as a second readiness path.
+            // Confirm usable layout if WebKit throttles animation-frame callbacks.
             webView.evaluateJavaScript("document.readyState === 'complete' && !!document.body && document.body.getBoundingClientRect().height > 0", in: nil, in: .defaultClient) { [weak self, weak webView] result in
                 guard let self, navigation === self.activeNavigation else { return }
                 if case .success(let value) = result, value as? Bool == true {
@@ -179,7 +159,7 @@ struct ArticleWebView {
                 }
             }
         }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { recover(webView) }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if activeNavigation != nil { recover(webView) } }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             if navigation === activeNavigation, (error as NSError).code != NSURLErrorCancelled { recover(webView) }
         }

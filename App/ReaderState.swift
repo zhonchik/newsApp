@@ -22,7 +22,8 @@ import SwiftData
     private let service = FeedService()
     private var lastRefresh = Date.distantPast
     private var opening = false
-    private var firstPageDisplayed = false
+    private var loadingInitialQueue = false
+    private var displayedKey: String?
     private var backgroundStarted = false
     private var maintenance: Task<Void, Never>?
     private var cacheWarmup: Task<Void, Never>?
@@ -30,32 +31,56 @@ import SwiftData
     var current: ArticleLink? { articles.first { $0.key == selection } }
     var unreadCount: Int { articles.filter { !$0.read }.count }
 
-    func start(container: ModelContainer) async {
+    func start(library: LibraryContainer) async {
         guard worker == nil, !opening else { return }
         opening = true; starting = true; startupError = nil
-        defer { opening = false; starting = false }
-        let background = await Task.detached(priority: .utility) { LibraryWorker(modelContainer: container) }.value
-        worker = background
+        defer { opening = false }
         do {
+            let background = try await library.worker()
+            worker = background
             // Publish the saved body before any all-library scan or migration.
-            if let cached = try await background.launchDocument() {
+            if let cached = try await background.launchDocument(restored: library.launchDocument) {
+                LaunchMetrics.mark("Saved database article available")
                 document = cached; selection = cached.key
             }
-            try await reloadSnapshot()
-            starting = false
-            if let current, document?.key == current.key { try? await MediaCache.shared.remember(current) }
-            if firstPageDisplayed || document == nil { beginBackgroundWork() }
+            if let document, displayedKey != document.key, articleError == nil { return }
+            await loadInitialQueue()
         } catch {
             startupError = error.localizedDescription
+            worker = nil
+            starting = false
+        }
+    }
+
+    private func loadInitialQueue() async {
+        guard starting, worker != nil, !loadingInitialQueue else { return }
+        loadingInitialQueue = true
+        defer { loadingInitialQueue = false }
+        do {
+            LaunchMetrics.mark("Queue lookup started")
+            try await reloadSnapshot()
+            LaunchMetrics.mark("Queue available")
+            starting = false
+            if let current, document?.key == current.key { try? await MediaCache.shared.remember(current) }
+            if displayedKey == selection || current == nil || articleError != nil { beginBackgroundWork() }
+        } catch {
+            startupError = error.localizedDescription
+            starting = false
             if articles.isEmpty { worker = nil }
         }
     }
-    func pageDidDisplay() {
+    func pageDidDisplay(_ key: String) {
         pageVisible = true
-        firstPageDisplayed = true
-        if !starting { beginBackgroundWork() }
+        displayedKey = key
+        if starting && key == document?.key {
+            Task { await loadInitialQueue() }
+        } else if !starting && key == selection { beginBackgroundWork() }
     }
-    func pageFailed(_ message: String) { articleError = message }
+    func pageFailed(_ message: String) {
+        articleError = message
+        if starting && document != nil { Task { await loadInitialQueue() } }
+        else if !starting { beginBackgroundWork() }
+    }
     func retryPage() { articleError = nil; renderVersion += 1 }
     private func beginBackgroundWork() {
         guard let worker, !backgroundStarted else { return }
@@ -88,10 +113,11 @@ import SwiftData
         do {
             let content: CachedArticle
             if let cached = await MediaCache.shared.article(key) { content = cached }
+            else if let legacy = try await worker.legacyBody(key) { content = legacy }
             else {
-                try await worker.migrateContent(key: key)
-                if let migrated = await MediaCache.shared.article(key) { content = migrated }
-                else { content = try await preparation.prepare(link) }
+                LaunchMetrics.mark("Selected body missing locally; publisher fetch started")
+                content = try await preparation.prepare(link)
+                LaunchMetrics.mark("Publisher body available")
             }
             guard !Task.isCancelled, selection == key else { return }
             document = ReaderDocument(link, content: content)
@@ -100,7 +126,7 @@ import SwiftData
             try await reloadSnapshot()
             if backgroundStarted, selection == articles.last?.key { await refresh() }
         } catch is CancellationError { }
-        catch { if selection == key { articleError = error.localizedDescription } }
+        catch { if selection == key { pageFailed(error.localizedDescription) } }
     }
     func move(_ offset: Int) {
         guard let index = articles.firstIndex(where: { $0.key == selection }), articles.indices.contains(index + offset) else {

@@ -25,24 +25,95 @@ actor MediaCache {
         config.timeoutIntervalForResource = 180
         return URLSession(configuration: config)
     }
+    private struct FormattedBody: Codable {
+        let signature: Data
+        let html: String
+        let cachedMedia: [String: Bool]
+    }
+    private var lastBody: FormattedBody?
+    private var bodyNeedsSave = false
+    private var bodyFile: URL { directory.appendingPathComponent("last-formatted-body") }
+
+    func formattedBody(_ article: ReaderDocument, hiddenText: String) throws -> (html: String, reused: Bool) {
+        // Increment the format version when changing sanitization or media markup.
+        var hash = SHA256()
+        for value in ["reader-body-1", String(ContentRules.revision), article.key, article.url,
+                      hiddenText, article.text, article.html, article.feedHTML] {
+            let bytes = Data(value.utf8)
+            withUnsafeBytes(of: UInt64(bytes.count).bigEndian) { hash.update(bufferPointer: $0) }
+            hash.update(data: bytes)
+        }
+        let signature = Data(hash.finalize())
+        let saved = lastBody ?? (try? Data(contentsOf: bodyFile)).flatMap { try? JSONDecoder().decode(FormattedBody.self, from: $0) }
+        if let saved, saved.signature == signature, saved.cachedMedia.allSatisfy({ hasCachedMedia($0.key) == $0.value }) {
+            lastBody = saved
+            return (saved.html, true)
+        }
+
+        let text = article.text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+        let fallback = "<p>" + text.replacingOccurrences(of: "\n", with: "<br>") + "</p>"
+        let source = article.html.isEmpty && article.text.isEmpty ? article.feedHTML : article.html
+        let clean = try ReaderContent.html(body: source.isEmpty ? fallback : source, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)
+        let doc = try SwiftSoup.parseBodyFragment(clean)
+        let media = try rewriteMedia(in: doc)
+        let html = try doc.body()?.html() ?? clean
+        bodyNeedsSave = true
+        lastBody = FormattedBody(signature: signature, html: html, cachedMedia: media)
+        return (html, false)
+    }
+
+    func saveFormattedBody() throws {
+        guard bodyNeedsSave, let body = lastBody else { return }
+        bodyNeedsSave = false
+        let data = try JSONEncoder().encode(body)
+        guard data.count <= min(limit / 8, 4 * 1024 * 1024) else { return }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: bodyFile, options: .atomic)
+        try trim()
+    }
+
     func rewrite(_ html: String) throws -> String {
         let doc = try SwiftSoup.parse(html)
+        _ = try rewriteMedia(in: doc)
+        return try doc.outerHtml()
+    }
+    private func rewriteMedia(in doc: Document) throws -> [String: Bool] {
+        var media: [String: Bool] = [:]
         for image in try doc.select("img[src], video[poster]") {
             let attr = image.tagName() == "video" ? "poster" : "src"
-            if let source = MediaRequest.cachedURL(try image.attr(attr)) { try image.attr(attr, source) }
+            if let raw = MediaURL.resolve(try image.attr(attr)), let source = MediaRequest.cachedURL(raw) {
+                let cached = hasCachedMedia(raw)
+                media[raw] = cached
+                if cached { try image.attr(attr, source) }
+                else {
+                    try image.removeAttr(attr)
+                    try image.attr("data-reader-" + attr, source)
+                }
+            }
             if image.tagName() == "img" { try image.attr("loading", "lazy").attr("decoding", "async") }
         }
         for video in try doc.select("video[src], source[src]") {
             let raw = try video.attr("src")
             guard let cached = MediaRequest.cachedURL(raw) else { continue }
-            let name = SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
-            if FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path),
-               FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).appendingPathExtension("json").path) {
+            let available = hasCachedMedia(raw)
+            media[raw] = available
+            if available {
                 try video.attr("src", cached)
             }
         }
         for video in try doc.select("video") { try video.attr("preload", "none") }
-        return try doc.outerHtml()
+        for frame in try doc.select("iframe[src]") {
+            let source = try frame.attr("src")
+            try frame.removeAttr("src")
+            try frame.attr("data-reader-src", source)
+        }
+        return media
+    }
+    private func hasCachedMedia(_ url: String) -> Bool {
+        let name = SHA256.hash(data: Data(url.utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = directory.appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: file.path)
+            && FileManager.default.fileExists(atPath: file.appendingPathExtension("json").path)
     }
     func entry(for requestedURL: URL, force: Bool = false) async throws -> Entry {
         guard let normalized = MediaURL.resolve(requestedURL.absoluteString), let url = URL(string: normalized) else { throw URLError(.badURL) }
@@ -97,6 +168,7 @@ actor MediaCache {
         return directory.appendingPathComponent(name)
     }
     private static let lastArticleKey = "lastCachedArticleLink"
+    static func forgetLaunchLink() { UserDefaults.standard.removeObject(forKey: lastArticleKey) }
     func remember(_ link: ArticleLink) throws {
         UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: Self.lastArticleKey)
     }
@@ -113,9 +185,23 @@ actor MediaCache {
         return article
     }
     func storeArticle(_ article: CachedArticle, key: String) throws {
+        try writeArticle(article, key: key)
+        try trim()
+    }
+    private func writeArticle(_ article: CachedArticle, key: String) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(article).write(to: articleFile(key), options: .atomic)
+    }
+
+    func migrateBatch(_ bodies: [(String, CachedArticle)]) throws -> Set<String> {
+        for (key, body) in bodies {
+            try Task.checkCancellation()
+            if article(key) == nil { try writeArticle(body, key: key) }
+        }
         try trim()
+        return Set(bodies.compactMap { key, _ in
+            FileManager.default.fileExists(atPath: articleFile(key).path) ? key : nil
+        })
     }
     /// Subscription refresh warms images/posters, never video data.
     func prefetchImages(_ html: String, feed: String = "", baseURL: String, force: Bool = false) async throws {
