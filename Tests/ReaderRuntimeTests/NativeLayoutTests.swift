@@ -7,6 +7,13 @@ import ReaderContent
 @testable import ReaderRuntime
 
 final class NativeLayoutTests: XCTestCase {
+    func testBodyWeightAcrossThemesAndContrastSettings() {
+        XCTAssertEqual(ReaderAppearance.bodyWeight(dark: false, increasedContrast: false), 400)
+        XCTAssertEqual(ReaderAppearance.bodyWeight(dark: false, increasedContrast: true), 400)
+        XCTAssertEqual(ReaderAppearance.bodyWeight(dark: true, increasedContrast: false), 350)
+        XCTAssertEqual(ReaderAppearance.bodyWeight(dark: true, increasedContrast: true), 400)
+    }
+
     @MainActor func testCachedPhotosAppearInNativeRSSAndTelegramLayouts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

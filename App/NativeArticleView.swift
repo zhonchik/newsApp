@@ -16,6 +16,35 @@ struct NativeArticleView: View {
     var cache = MediaCache.shared
     @Environment(\.colorScheme) private var scheme
 
+    @Environment(\.colorSchemeContrast) private var contrast
+    #if os(iOS)
+    private typealias PlatformFont = UIFont
+    @ScaledMetric(relativeTo: .body) private var bodySize = UIFont.preferredFont(
+        forTextStyle: .body, compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
+    ).pointSize
+    #else
+    private typealias PlatformFont = NSFont
+    private var bodySize: CGFloat { NSFont.preferredFont(forTextStyle: .body, options: [:]).pointSize }
+    #endif
+
+    private var bodyTypeface: PlatformFont {
+        let size = bodySize * ReaderAppearance.bodyScale
+        let weight = ReaderAppearance.bodyWeight(dark: scheme == .dark, increasedContrast: contrast == .increased)
+        // CSS 350 lies halfway between Apple's light (300) and regular (400).
+        let fraction = CGFloat(400 - weight) / 100
+        let system = PlatformFont.systemFont(ofSize: size, weight: .init(rawValue: PlatformFont.Weight.light.rawValue * fraction))
+        guard let serif = system.fontDescriptor.withDesign(.serif) else { return system }
+        #if os(iOS)
+        return UIFont(descriptor: serif, size: size)
+        #else
+        return NSFont(descriptor: serif, size: size) ?? system
+        #endif
+    }
+
+    private var ink: Color {
+        color(scheme == .dark ? palette.darkText : palette.lightText, fallback: scheme == .dark ? "#DEDCD8" : "#202020")
+    }
+
     private func color(_ value: String, fallback: String) -> Color {
         let rgb = UInt32(ReaderPalette.valid(value, fallback: fallback).dropFirst(), radix: 16) ?? 0
         return Color(red: Double(rgb >> 16) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
@@ -24,21 +53,22 @@ struct NativeArticleView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 Text("\(article.source) · \(article.published.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption)
                 if !ContentRules.isTelegram(article.url) {
                     Text(article.title).font(.system(.title2, design: .serif).bold()).accessibilityAddTraits(.isHeader)
                 }
                 ForEach(content.blocks.indices, id: \.self) { index in
                     block(content.blocks[index])
                 }
-                if let url = URL(string: article.url) { Link("Read original", destination: url) }
+                if let url = URL(string: article.url) { Link(destination: url) { Text("Read original").underline() } }
             }
             .frame(maxWidth: 680, alignment: .leading)
             .padding(.horizontal, 24).padding(.vertical, 16)
             .frame(maxWidth: .infinity)
             .background { GeometryReader { _ in Color.clear.onAppear { onDisplay() } } }
         }
-        .foregroundStyle(color(scheme == .dark ? palette.darkText : palette.lightText, fallback: scheme == .dark ? "#DEDCD8" : "#202020"))
+        .foregroundStyle(ink)
+        .tint(ink)
         .background(color(scheme == .dark ? palette.darkBackground : palette.lightBackground, fallback: scheme == .dark ? "#181818" : "#FFFFFF"))
         .refreshable { await reload() }
         .simultaneousGesture(DragGesture(minimumDistance: 40).onEnded { value in
@@ -58,13 +88,17 @@ struct NativeArticleView: View {
     @ViewBuilder private func block(_ block: NativeArticleBody.Block) -> some View {
         switch block {
         case .text(let style, let runs):
+            let typeface = bodyTypeface
             let font: Font = switch style {
             case .heading: .system(.title2, design: .serif).bold()
             case .subheading: .system(.headline, design: .serif)
             case .caption: .caption
-            default: .system(.title3, design: .serif)
+            case .paragraph, .quote: Font(typeface)
             }
-            Text(attributed(runs)).font(font).textSelection(.enabled).lineSpacing(5)
+            let naturalHeight = typeface.ascender - typeface.descender + typeface.leading
+            let spacing = max(0, typeface.pointSize * ReaderAppearance.lineHeight - naturalHeight)
+            Text(attributed(runs)).font(font).textSelection(.enabled)
+                .lineSpacing(style == .paragraph || style == .quote ? spacing : 5)
                 .padding(.leading, style == .quote ? 12 : 0)
                 .overlay(alignment: .leading) { if style == .quote { Rectangle().fill(.tint).frame(width: 3) } }
                 .accessibilityAddTraits(style == .heading || style == .subheading ? .isHeader : [])
@@ -88,6 +122,7 @@ struct NativeArticleView: View {
             if run.italic { intent.insert(.emphasized) }
             span.inlinePresentationIntent = intent
             span.link = run.link
+            if run.link != nil { span.underlineStyle = .single }
             result.append(span)
         }
         return result
