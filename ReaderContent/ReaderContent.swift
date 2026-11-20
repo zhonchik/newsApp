@@ -39,7 +39,7 @@ public enum ReaderContent {
         // Publisher iframes/scripts are removed. Only our validated YouTube embeds
         // are appended after cleaning, and only HTTPS video sources survive.
         let whitelist = try Whitelist.relaxed()
-        try whitelist.addTags("video", "source")
+        try whitelist.addTags("video", "source", "figure", "figcaption")
         try whitelist.addAttributes("img", "data-reader-original")
         try whitelist.addAttributes("video", "src", "poster", "controls", "playsinline", "preload", "width", "height")
         try whitelist.addAttributes("source", "src", "type")

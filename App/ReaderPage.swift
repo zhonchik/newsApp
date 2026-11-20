@@ -6,6 +6,7 @@ import Foundation
 struct ReaderPage: Sendable {
     let input: Input
     let html: String
+    let nativeBody: NativeArticleBody?
     let reusedBody: Bool
 
     struct Input: Equatable, Sendable {
@@ -42,6 +43,6 @@ struct ReaderPage: Sendable {
         \(headline)<article>\(body)</article>
         <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
         """
-        return ReaderPage(input: input, html: html, reusedBody: formatted?.reused == true)
+        return ReaderPage(input: input, html: html, nativeBody: formatted?.nativeBody, reusedBody: formatted?.reused == true)
     }
 }

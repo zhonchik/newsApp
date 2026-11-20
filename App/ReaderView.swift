@@ -54,11 +54,10 @@ struct ReaderView: View {
     @ViewBuilder private var content: some View {
         let document = visibleDocument
         if document != nil || (reader.starting && library.error == nil && reader.startupError == nil) {
-            ArticleWebView(launchPage: reader.starting && reader.document == nil ? library.launchPage : nil, article: document, hiddenText: reader.current?.hiddenText ?? document?.hiddenText ?? "", renderVersion: reader.renderVersion, onDisplay: {
+            HybridArticleReader(launchPage: reader.starting && reader.document == nil ? library.launchPage : nil, article: document, hiddenText: reader.current?.hiddenText ?? document?.hiddenText ?? "", renderVersion: reader.renderVersion, onDisplay: { renderer in
                 guard let document else { return }
                 if !reader.pageVisible {
-                    LaunchMetrics.mark("First article layout confirmed", finished: true)
-                    os_signpost(.event, log: LaunchMetrics.log, name: "First WebKit display")
+                    LaunchMetrics.mark("First \(renderer) article layout confirmed", finished: true)
                     os_signpost(.event, log: LaunchMetrics.log, name: "First readable article")
                 }
                 reader.pageDidDisplay(document.key)

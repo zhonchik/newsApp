@@ -28,16 +28,17 @@ actor MediaCache {
     private struct FormattedBody: Codable {
         let signature: Data
         let html: String
+        let nativeBody: NativeArticleBody?
         let cachedMedia: [String: Bool]
     }
     private var lastBody: FormattedBody?
     private var bodyNeedsSave = false
     private var bodyFile: URL { directory.appendingPathComponent("last-formatted-body") }
 
-    func formattedBody(_ article: ReaderDocument, hiddenText: String) throws -> (html: String, reused: Bool) {
+    func formattedBody(_ article: ReaderDocument, hiddenText: String) throws -> (html: String, reused: Bool, nativeBody: NativeArticleBody?) {
         // Increment the format version when changing sanitization or media markup.
         var hash = SHA256()
-        for value in ["reader-body-1", String(ContentRules.revision), article.key, article.url,
+        for value in ["reader-body-2", String(ContentRules.revision), article.key, article.url,
                       hiddenText, article.text, article.html, article.feedHTML] {
             let bytes = Data(value.utf8)
             withUnsafeBytes(of: UInt64(bytes.count).bigEndian) { hash.update(bufferPointer: $0) }
@@ -47,7 +48,7 @@ actor MediaCache {
         let saved = lastBody ?? (try? Data(contentsOf: bodyFile)).flatMap { try? JSONDecoder().decode(FormattedBody.self, from: $0) }
         if let saved, saved.signature == signature, saved.cachedMedia.allSatisfy({ hasCachedMedia($0.key) == $0.value }) {
             lastBody = saved
-            return (saved.html, true)
+            return (saved.html, true, saved.nativeBody)
         }
 
         let text = article.text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
@@ -55,11 +56,12 @@ actor MediaCache {
         let source = article.html.isEmpty && article.text.isEmpty ? article.feedHTML : article.html
         let clean = try ReaderContent.html(body: source.isEmpty ? fallback : source, feed: article.feedHTML, baseURL: article.url, hiddenText: hiddenText)
         let doc = try SwiftSoup.parseBodyFragment(clean)
+        let nativeBody = try doc.body().flatMap(NativeArticleBody.parse)
         let media = try rewriteMedia(in: doc)
         let html = try doc.body()?.html() ?? clean
         bodyNeedsSave = true
-        lastBody = FormattedBody(signature: signature, html: html, cachedMedia: media)
-        return (html, false)
+        lastBody = FormattedBody(signature: signature, html: html, nativeBody: nativeBody, cachedMedia: media)
+        return (html, false, nativeBody)
     }
 
     func saveFormattedBody() throws {
@@ -114,6 +116,11 @@ actor MediaCache {
         let file = directory.appendingPathComponent(name)
         return FileManager.default.fileExists(atPath: file.path)
             && FileManager.default.fileExists(atPath: file.appendingPathExtension("json").path)
+    }
+    func cachedFile(for url: URL) -> URL? {
+        guard let raw = MediaURL.resolve(url.absoluteString), hasCachedMedia(raw) else { return nil }
+        let name = SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(name)
     }
     func entry(for requestedURL: URL, force: Bool = false) async throws -> Entry {
         guard let normalized = MediaURL.resolve(requestedURL.absoluteString), let url = URL(string: normalized) else { throw URLError(.badURL) }
