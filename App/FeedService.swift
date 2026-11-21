@@ -72,6 +72,34 @@ actor FeedService {
         for (const link of doc.querySelectorAll('a[href]:has(img)')) {
           if (!link.textContent.trim() && bannerLink.test(link.getAttribute('href'))) link.remove();
         }
+        // Readability can merge neighboring stories when they share the same layout.
+        const normalizeTitle = value => value?.replace(/\\s+/g, ' ').trim();
+        const pageTitles = new Set([
+          doc.querySelector('meta[property="og:title"]')?.content,
+          doc.querySelector('meta[name="twitter:title"]')?.content,
+          doc.title
+        ].map(normalizeTitle).filter(Boolean));
+        const topHeading = 'h1, [role="heading"][aria-level="1"]';
+        const articleElement = 'article, [role="article"]';
+        const headings = [...doc.querySelectorAll(topHeading)]
+          .filter(heading => pageTitles.has(normalizeTitle(heading.textContent)));
+        if (headings.length === 1) {
+          const heading = headings[0];
+          const article = heading.closest(articleElement) || heading.closest('section');
+          const next = article?.nextElementSibling;
+          if (article?.querySelector('p') && next?.matches(articleElement + ', section') && next.querySelector('p')) {
+            // Some layouts use the main headline's classes on a plain element in the preview.
+            const classes = [...heading.classList];
+            const hasOtherTitle = [...next.querySelectorAll(topHeading + ', div[class]')].some(candidate => {
+              const title = normalizeTitle(candidate.textContent);
+              if (!title || pageTitles.has(title)) return false;
+              if (candidate.matches(topHeading)) return true;
+              return classes.length > 0 && candidate.classList.length === classes.length &&
+                classes.every(name => candidate.classList.contains(name)) && !candidate.querySelector('p');
+            });
+            if (hasOtherTitle) next.remove();
+          }
+        }
         // Keep inline labels and inert definitions together through extraction.
         for (const template of doc.querySelectorAll('template')) {
           const component = template.parentElement;
