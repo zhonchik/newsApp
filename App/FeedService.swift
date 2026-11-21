@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import ReaderContent
+#endif
 import Foundation
 import SwiftSoup
 import WebKit
@@ -57,7 +60,16 @@ actor FeedService {
             guard !html.isEmpty else { throw URLError(.cannotParseResponse) }
             return html
         }
-        guard let resource = Bundle.main.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
+        return try await Self.extractArticle(page: page, url: url)
+    }
+
+    static func extractArticle(page: String, url: String) async throws -> String {
+        #if SWIFT_PACKAGE
+        let bundle = Bundle.module
+        #else
+        let bundle = Bundle.main
+        #endif
+        guard let resource = bundle.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
         let library = try String(contentsOf: resource, encoding: .utf8)
         let encoded = String(data: try JSONSerialization.data(withJSONObject: [page, ContentRules.adSelector, ContentRules.bannerLinkPattern]), encoding: .utf8)!
         let script = library + """
