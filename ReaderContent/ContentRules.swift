@@ -2,7 +2,7 @@ import Foundation
 import SwiftSoup
 
 public enum ContentRules {
-    public static let revision = 8
+    public static let revision = 9
 
     public static let adSelector = ".ad, .ads, .advertisement, .ad-banner, .adv-banner, [id^=ad-banner-], [id^=adv-banner-], [data-ad], [data-ad-client], [data-ad-slot], [data-erid]"
     public static let bannerLinkPattern = #"^[^?#]*\?(?:[^&#]*&)*utm_medium=[^&#]*banner[^&#]*(?:[&#]|$)"#

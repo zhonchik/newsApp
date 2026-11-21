@@ -22,6 +22,14 @@ final class ReaderContentTests: XCTestCase {
         XCTAssertTrue(result.contains("Full story"))
         XCTAssertFalse(result.contains("Summary"))
     }
+    func testCaptionedLeadAndBylinePrecedeSupplementaryFeedImage() throws {
+        let body = "<header><p>By Alex</p></header><figure><img src='/river.jpg'><figcaption>Upper river</figcaption></figure><p>Full story</p>"
+        let result = try ReaderContent.html(body: body, feed: feed, baseURL: base)
+        let markers = ["By Alex", "river.jpg", "Upper river", "Full story", "cover.jpg"]
+        XCTAssertTrue(result.contains("<figcaption>"))
+        let positions = try markers.map { try XCTUnwrap(result.range(of: $0)).lowerBound }
+        XCTAssertEqual(positions, positions.sorted())
+    }
     func testUnsafeFeedMarkupIsNotInserted() throws {
         let result = try ReaderContent.html(body: "<p>Article</p>", feed: "<script>alert(1)</script><img src='javascript:alert(1)'>", baseURL: base)
         XCTAssertFalse(result.contains("script"))

@@ -35,7 +35,19 @@ public enum ReaderContent {
             try image.attr("src", source)
             photos += try image.outerHtml()
         }
-        try document.body()?.prepend(photos)
+        if !photos.isEmpty, let body = document.body() {
+            let firstBlock = try body.select("p, figure, img, video").first { block in
+                !block.parents().contains { $0.tagName() == "header" }
+            }
+            if let firstBlock, firstBlock.tagName() == "figure", try firstBlock.select("figcaption").first() != nil {
+                // Keep the article's captioned lead photo first. Feed-only media is supplementary.
+                try body.append(photos)
+            } else if let header = body.children().first(), header.tagName() == "header" {
+                try header.after(photos)
+            } else {
+                try body.prepend(photos)
+            }
+        }
         // Publisher iframes/scripts are removed. Only our validated YouTube embeds
         // are appended after cleaning, and only HTTPS video sources survive.
         let whitelist = try Whitelist.relaxed()

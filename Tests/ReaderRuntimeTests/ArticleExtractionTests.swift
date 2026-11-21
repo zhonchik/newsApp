@@ -49,6 +49,26 @@ final class ArticleExtractionTests: XCTestCase {
         XCTAssertTrue(result.contains("The second chapter continues the same story."))
     }
 
+    func testExtractionKeepsArticleMetadataAndCaptionButDropsSiteShortcutHint() async throws {
+        let page = """
+        <meta name="author" content="Morgan Lee"><main><article>
+          <h1>The river survey</h1>
+          <p>Results from the spring expedition</p>
+          <div><a rel="author">Morgan Lee</a></div>
+          <photo-view data-gallery='{"images":[{"src":"/photos/river.jpg","caption":"The <i>upper</i> river","credit":"Field team"}]}'></photo-view>
+          <p>\(prose("Press Ctrl+Enter in the sample application."))</p>
+          <div v-if="desktop">Flag an error by pressing Ctrl+Enter.</div>
+        </article></main>
+        """
+        let result = try await FeedService.extractArticle(page: page, url: "https://publisher.example/story")
+        for text in ["Results from the spring expedition", "Morgan Lee", "<figcaption>The upper river — Field team</figcaption>"] {
+            XCTAssertEqual(result.components(separatedBy: text).count, 2)
+        }
+        XCTAssertTrue(result.contains("https://publisher.example/photos/river.jpg"))
+        XCTAssertTrue(result.contains("Press Ctrl+Enter in the sample application."))
+        XCTAssertFalse(result.contains("Flag an error"))
+    }
+
     private func prose(_ opening: String) -> String {
         opening + """
          Local volunteers recorded changes across the site over several months. The survey team compared observations from each visit, recorded the results in a field notebook, and discussed the findings with residents before publishing the report.
