@@ -5,12 +5,16 @@ struct SubscriptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Subscription.created) private var subscriptions: [Subscription]
 
+    private var alphabeticalSubscriptions: [Subscription] {
+        subscriptions.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("Your subscriptions") {
                     if subscriptions.isEmpty { Text("Your stream starts here.").foregroundStyle(.secondary) }
-                    ForEach(subscriptions) { subscription in
+                    ForEach(alphabeticalSubscriptions) { subscription in
                         NavigationLink {
                             SubscriptionSettingsView(subscription: subscription)
                         } label: {
