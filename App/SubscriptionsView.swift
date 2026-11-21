@@ -16,7 +16,7 @@ struct SubscriptionsView: View {
                     if subscriptions.isEmpty { Text("Your stream starts here.").foregroundStyle(.secondary) }
                     ForEach(alphabeticalSubscriptions) { subscription in
                         NavigationLink {
-                            SubscriptionSettingsView(subscription: subscription)
+                            SubscriptionSettingsView(subscription: subscription, closeSettings: dismiss)
                         } label: {
                             Label(subscription.name, systemImage: subscription.paused ? "pause.circle" : "play.circle")
                                 .accessibilityValue(subscription.paused ? "Paused" : "Running")
@@ -24,7 +24,7 @@ struct SubscriptionsView: View {
                     }
                 }
                 Section {
-                    NavigationLink("Add subscription") { SubscriptionSettingsView(subscription: nil) }
+                    NavigationLink("Add subscription") { SubscriptionSettingsView(subscription: nil, closeSettings: dismiss) }
                 }
             }
             .formStyle(.grouped)
@@ -36,6 +36,7 @@ struct SubscriptionsView: View {
 
 private struct SubscriptionSettingsView: View {
     let subscription: Subscription?
+    let closeSettings: DismissAction
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Subscription.created) private var subscriptions: [Subscription]
@@ -47,7 +48,8 @@ private struct SubscriptionSettingsView: View {
     @State private var confirmingDeletion = false
     @State private var errorMessage: String?
 
-    init(subscription: Subscription?) {
+    init(subscription: Subscription?, closeSettings: DismissAction) {
+        self.closeSettings = closeSettings
         self.subscription = subscription
         _name = State(initialValue: subscription?.name ?? "")
     }
@@ -124,6 +126,9 @@ private struct SubscriptionSettingsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(subscription?.name ?? "Add subscription")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Done") { closeSettings() } }
+        }
         .alert("Library update failed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
