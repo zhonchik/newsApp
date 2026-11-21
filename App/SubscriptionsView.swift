@@ -47,9 +47,15 @@ private struct SubscriptionSettingsView: View {
     @State private var confirmingDeletion = false
     @State private var errorMessage: String?
 
+    init(subscription: Subscription?) {
+        self.subscription = subscription
+        _name = State(initialValue: subscription?.name ?? "")
+    }
+
+    private var cleanName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var cleanAddress: String { address.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var valid: Bool {
-        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard !cleanName.isEmpty else { return false }
         if kind == "telegram" { return cleanAddress.range(of: "^@?[A-Za-z0-9_]{5,32}$", options: .regularExpression) != nil }
         guard let url = URL(string: cleanAddress) else { return false }
         return url.scheme == "https" && url.host != nil
@@ -59,6 +65,16 @@ private struct SubscriptionSettingsView: View {
         Form {
             Section("Source") {
                 if let subscription {
+                    TextField("Name", text: $name)
+                    Button("Save name") {
+                        let previousName = subscription.name
+                        subscription.name = cleanName
+                        if save() {
+                            name = subscription.name
+                        } else {
+                            subscription.name = previousName
+                        }
+                    }.disabled(cleanName.isEmpty || cleanName == subscription.name)
                     LabeledContent("Type", value: subscription.kind == "telegram" ? "Telegram" : "RSS / Atom")
                     LabeledContent("Address", value: subscription.address)
                 } else {
@@ -127,7 +143,7 @@ private struct SubscriptionSettingsView: View {
             errorMessage = "This subscription already exists."
             return
         }
-        let newSubscription = Subscription(name: name.trimmingCharacters(in: .whitespacesAndNewlines), address: cleanAddress, kind: kind)
+        let newSubscription = Subscription(name: cleanName, address: cleanAddress, kind: kind)
         newSubscription.hiddenText = hiddenText
         context.insert(newSubscription)
         if save() { dismiss() } else { context.delete(newSubscription) }
