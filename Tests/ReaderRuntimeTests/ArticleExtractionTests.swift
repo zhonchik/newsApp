@@ -69,6 +69,20 @@ final class ArticleExtractionTests: XCTestCase {
         XCTAssertFalse(result.contains("Flag an error"))
     }
 
+    func testExtractionOmitsFooterControlsFromImageOnlyStory() async throws {
+        let page = """
+        <main><article>
+          <figure><img src="https://publisher.example/photo.jpg"><figcaption>Field survey</figcaption></figure>
+          <footer><span>Report a typo<br>Press Ctrl+Enter</span><div>Tap to report</div></footer>
+        </article></main>
+        """
+        let result = try await FeedService.extractArticle(page: page, url: "https://publisher.example/story")
+        XCTAssertTrue(result.contains("photo.jpg"))
+        XCTAssertTrue(result.contains("Field survey"))
+        XCTAssertFalse(result.contains("Report a typo"))
+        XCTAssertFalse(result.contains("Tap to report"))
+    }
+
     private func prose(_ opening: String) -> String {
         opening + """
          Local volunteers recorded changes across the site over several months. The survey team compared observations from each visit, recorded the results in a field notebook, and discussed the findings with residents before publishing the report.
