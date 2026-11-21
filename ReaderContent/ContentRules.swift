@@ -16,7 +16,7 @@ public enum ContentRules {
         }
     }
 
-    static func removeAds(from document: Document) throws {
+    public static func removeAds(from document: Document) throws {
         try document.select(adSelector).remove()
         for link in try document.select("a[href]:has(img)") {
             if try link.text().isEmpty,
