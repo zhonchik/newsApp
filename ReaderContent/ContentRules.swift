@@ -2,14 +2,27 @@ import Foundation
 import SwiftSoup
 
 public enum ContentRules {
-    public static let revision = 6
+    public static let revision = 7
+
+    static let adSelector = ".ad, .ads, .advertisement, .ad-banner, .adv-banner, [id^=ad-banner-], [id^=adv-banner-], [data-ad], [data-ad-client], [data-ad-slot], [data-erid]"
+    static let bannerLinkPattern = #"^[^?#]*\?(?:[^&#]*&)*utm_medium=[^&#]*banner[^&#]*(?:[&#]|$)"#
 
     public static func isTelegram(_ url: String) -> Bool { URL(string: url)?.host?.lowercased() == "t.me" }
 
     public static func clean(_ document: Document, hiddenText: String) throws {
-        try document.select(".ad, .ads, .advertisement, [data-ad], [data-ad-client]").remove()
+        try removeAds(from: document)
         for phrase in hiddenText.components(separatedBy: .newlines) where !phrase.trimmingCharacters(in: .whitespaces).isEmpty {
             try removeText(phrase, from: document)
+        }
+    }
+
+    static func removeAds(from document: Document) throws {
+        try document.select(adSelector).remove()
+        for link in try document.select("a[href]:has(img)") {
+            if try link.text().isEmpty,
+               try link.attr("href").range(of: bannerLinkPattern, options: [.regularExpression, .caseInsensitive]) != nil {
+                try link.remove()
+            }
         }
     }
 

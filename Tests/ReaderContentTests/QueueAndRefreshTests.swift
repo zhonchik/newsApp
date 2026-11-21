@@ -51,4 +51,26 @@ final class QueueAndRefreshTests: XCTestCase {
         XCTAssertTrue(result.contains("Story discusses advertising"))
         XCTAssertTrue(result.contains("Last paragraph"))
     }
+
+    func testBannerCampaignImagesAreRemovedFromArticleAndFeed() throws {
+        let body = """
+        <p>Editorial text <a href="/article?utm_medium=banner_top">with a source</a>.</p>
+        <a href="/offers?utm_medium=seasonal_banner"><img src="/promo-one.gif"></a>
+        <a href="/offers?utm_source=site&amp;utm_medium=banner_bottom"><img src="/promo-two.gif"></a>
+        <a href="/article#section?utm_medium=banner"><img src="/figure.jpg"></a>
+        <div data-erid="sample"><img src="/paid-placement.jpg"></div>
+        <aside class="ad-banner"><iframe src="https://www.youtube.com/embed/abcdefghijk"></iframe></aside>
+        """
+        let feed = """
+        <a href="/offers?utm_medium=banner"><img src="/promo-three.gif"></a>
+        <img src="/cover.jpg">
+        """
+        let result = try ReaderContent.html(body: body, feed: feed, baseURL: "https://publisher.example/story")
+        for removed in ["promo-one.gif", "promo-two.gif", "promo-three.gif", "paid-placement.jpg", "abcdefghijk"] {
+            XCTAssertFalse(result.contains(removed))
+        }
+        for retained in ["with a source", "figure.jpg", "cover.jpg"] {
+            XCTAssertTrue(result.contains(retained))
+        }
+    }
 }

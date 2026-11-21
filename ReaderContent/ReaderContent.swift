@@ -5,11 +5,11 @@ public enum ReaderContent {
     /// Preserve publisher feed photos when full-text extraction omits them.
     /// Resolve relative URLs before sanitizing so WebKit and the cleaner agree.
     public static func html(body: String, feed: String, baseURL: String, hiddenText: String = "") throws -> String {
-        let previews = try VideoPreview.youtube(in: body + feed, baseURL: baseURL)
         let document = try SwiftSoup.parse(body, baseURL)
         try ContentRules.clean(document, hiddenText: hiddenText)
         let fallback = try SwiftSoup.parse(feed, baseURL)
         try ContentRules.clean(fallback, hiddenText: hiddenText)
+        let previews = try VideoPreview.youtube(in: (document.body()?.html() ?? "") + (fallback.body()?.html() ?? ""), baseURL: baseURL)
         let feedImages = try fallback.select("img[src]").compactMap { image -> (Element, String)? in
             guard let source = MediaURL.resolve(try image.attr("src"), baseURL: baseURL) else { return nil }
             return (image, source)

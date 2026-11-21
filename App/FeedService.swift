@@ -59,13 +59,19 @@ actor FeedService {
         }
         guard let resource = Bundle.main.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
         let library = try String(contentsOf: resource, encoding: .utf8)
-        let encoded = String(data: try JSONSerialization.data(withJSONObject: [page]), encoding: .utf8)!
+        let encoded = String(data: try JSONSerialization.data(withJSONObject: [page, ContentRules.adSelector, ContentRules.bannerLinkPattern]), encoding: .utf8)!
         let script = library + """
 
-        const doc = new DOMParser().parseFromString(\(encoded)[0], 'text/html');
+        const [page, adSelector, bannerLinkPattern] = \(encoded);
+        const doc = new DOMParser().parseFromString(page, 'text/html');
         const base = doc.createElement('base');
         base.href = document.baseURI;
         doc.head.appendChild(base);
+        for (const ad of doc.querySelectorAll(adSelector)) ad.remove();
+        const bannerLink = new RegExp(bannerLinkPattern, 'i');
+        for (const link of doc.querySelectorAll('a[href]:has(img)')) {
+          if (!link.textContent.trim() && bannerLink.test(link.getAttribute('href'))) link.remove();
+        }
         // Keep inline labels and inert definitions together through extraction.
         for (const template of doc.querySelectorAll('template')) {
           const component = template.parentElement;
