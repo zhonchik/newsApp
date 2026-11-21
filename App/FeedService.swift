@@ -168,6 +168,8 @@ actor FeedService {
             if (figures.length) { element.replaceWith(...figures); break; }
           }
         }
+        // Remove footer controls before Readability scores nodes or the image fallback copies them.
+        for (const footer of doc.querySelectorAll('footer, [role="contentinfo"]')) footer.remove();
         const main = doc.querySelector('main, [role="main"], article');
         const imageFallback = main?.querySelector('img') ? main.innerHTML : '';
         const parsed = new Readability(doc).parse();
