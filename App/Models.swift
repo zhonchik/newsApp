@@ -11,11 +11,10 @@ import SwiftData
     var kind: String = "rss"
     var paused: Bool = false
     var hiddenText: String = ""
-    var contentDefaultsApplied: Bool = false
+    var contentDefaultsApplied: Bool = false // Retained for existing SwiftData stores.
     var created: Date = Date()
     init(name: String, address: String, kind: String) {
         self.name = name; self.address = address; self.kind = kind
-        hiddenText = ContentRules.defaultHiddenText(address: address); contentDefaultsApplied = true
     }
 }
 
@@ -122,10 +121,12 @@ struct ReaderDocument: Sendable, Equatable {
     let text: String
     let html: String
     let feedHTML: String
+    let contentRevision: Int
     let published: Date
     init(_ link: ArticleLink, content: CachedArticle) {
         hiddenText = link.hiddenText
         key = link.key; title = link.title; source = link.source; url = link.url
         text = content.text; html = content.html; feedHTML = content.feedHTML; published = link.published
+        contentRevision = content.revision
     }
 }

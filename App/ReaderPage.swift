@@ -53,6 +53,8 @@ struct ReaderPage: Sendable {
         img:not([width][height]) { aspect-ratio:auto 16/9; }
         figure { margin:1.5em 0; } figcaption,header,footer { font: -apple-system-caption1; color: inherit; }
         a { color: inherit; text-underline-offset:0.16em; } blockquote { border-left:3px solid #298c81; margin:1em 0; padding-left:1em; }
+        button[popovertarget] { appearance:none; border:0; padding:0; background:none; color:inherit; font:inherit; text-align:inherit; text-decoration:underline dotted; text-underline-offset:0.16em; cursor:pointer; }
+        [popover] { box-sizing:border-box; max-width:min(26em, calc(100% - 48px)); max-height:calc(100% - 48px); overflow:auto; padding:0.75em 1em; border:1px solid currentColor; border-radius:8px; color:CanvasText; background:Canvas; }
         pre { overflow-x:auto; padding:12px; background:light-dark(#f3f3f3,#252525); } table { display:block; overflow-x:auto; border-collapse:collapse; }
         td,th { border:1px solid GrayText; padding:8px; } footer { margin-top:32px; }
         </style></head><body><header>\(escape(article.source)) · \(escape(article.published.formatted(date: .abbreviated, time: .omitted)))</header>

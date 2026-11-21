@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import ReaderContent
+#endif
 import Foundation
 import SwiftSoup
 import WebKit
@@ -57,11 +60,135 @@ actor FeedService {
             guard !html.isEmpty else { throw URLError(.cannotParseResponse) }
             return html
         }
-        if let body = try ContentRules.articleBody(page: page, url: url) { return body }
-        guard let resource = Bundle.main.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
+        return try await Self.extractArticle(page: page, url: url)
+    }
+
+    static func extractArticle(page: String, url: String) async throws -> String {
+        #if SWIFT_PACKAGE
+        let bundle = Bundle.module
+        #else
+        let bundle = Bundle.main
+        #endif
+        guard let resource = bundle.url(forResource: "Readability", withExtension: "js") else { throw URLError(.fileDoesNotExist) }
         let library = try String(contentsOf: resource, encoding: .utf8)
-        let encoded = String(data: try JSONSerialization.data(withJSONObject: [page]), encoding: .utf8)!
-        let script = library + "\nconst doc = new DOMParser().parseFromString(\(encoded)[0], 'text/html'); const base = doc.createElement('base'); base.href = document.baseURI; doc.head.appendChild(base); new Readability(doc).parse()?.content || '';"
+        let encoded = String(data: try JSONSerialization.data(withJSONObject: [page, ContentRules.adSelector, ContentRules.bannerLinkPattern]), encoding: .utf8)!
+        let script = library + """
+
+        const [page, adSelector, bannerLinkPattern] = \(encoded);
+        const doc = new DOMParser().parseFromString(page, 'text/html');
+        const base = doc.createElement('base');
+        base.href = document.baseURI;
+        doc.head.appendChild(base);
+        for (const ad of doc.querySelectorAll(adSelector)) ad.remove();
+        const bannerLink = new RegExp(bannerLinkPattern, 'i');
+        for (const link of doc.querySelectorAll('a[href]:has(img)')) {
+          if (!link.textContent.trim() && bannerLink.test(link.getAttribute('href'))) link.remove();
+        }
+        // Readability can merge neighboring stories when they share the same layout.
+        const normalizeTitle = value => value?.replace(/\\s+/g, ' ').trim();
+        const pageTitles = new Set([
+          doc.querySelector('meta[property="og:title"]')?.content,
+          doc.querySelector('meta[name="twitter:title"]')?.content,
+          doc.title
+        ].map(normalizeTitle).filter(Boolean));
+        const topHeading = 'h1, [role="heading"][aria-level="1"]';
+        const articleElement = 'article, [role="article"]';
+        const headings = [...doc.querySelectorAll(topHeading)]
+          .filter(heading => pageTitles.has(normalizeTitle(heading.textContent)));
+        if (headings.length === 1) {
+          const heading = headings[0];
+          const article = heading.closest(articleElement) || heading.closest('section');
+          const next = article?.nextElementSibling;
+          if (article?.querySelector('p') && next?.matches(articleElement + ', section') && next.querySelector('p')) {
+            // Some layouts use the main headline's classes on a plain element in the preview.
+            const classes = [...heading.classList];
+            const hasOtherTitle = [...next.querySelectorAll(topHeading + ', div[class]')].some(candidate => {
+              const title = normalizeTitle(candidate.textContent);
+              if (!title || pageTitles.has(title)) return false;
+              if (candidate.matches(topHeading)) return true;
+              return classes.length > 0 && candidate.classList.length === classes.length &&
+                classes.every(name => candidate.classList.contains(name)) && !candidate.querySelector('p');
+            });
+            if (hasOtherTitle) next.remove();
+          }
+        }
+        // Keep inline labels and inert definitions together through extraction.
+        for (const template of doc.querySelectorAll('template')) {
+          const component = template.parentElement;
+          const label = component?.getAttribute('text')?.trim();
+          if (!label || !component.localName.includes('-')) continue;
+          const definition = doc.createElement('dfn');
+          definition.textContent = label;
+          definition.title = template.content.textContent.trim();
+          component.replaceWith(definition);
+        }
+        const heading = headings.length === 1 ? headings[0] : doc.querySelector('h1');
+        const deck = heading?.nextElementSibling;
+        const summary = doc.querySelector('meta[property="og:description"]')?.content;
+        const author = doc.querySelector('meta[name="author"]')?.content?.trim();
+        const followedByAuthor = author && normalizeTitle(deck?.nextElementSibling?.textContent) === normalizeTitle(author);
+        const subtitle = deck && (deck.matches('[itemprop="alternativeHeadline"], .subtitle, .subheadline') ||
+          (deck.matches('p') && (followedByAuthor || normalizeTitle(deck.textContent) === normalizeTitle(summary))))
+          ? deck.textContent.trim() : '';
+        // A shortcut hint inside a conditional UI element belongs to the source site's controls.
+        for (const hint of doc.querySelectorAll('[v-if], [v-show], [hidden], [aria-hidden="true"]')) {
+          if (!hint.childElementCount && hint.textContent.trim().length <= 200 &&
+              /(?:Ctrl|Control|Cmd|Command)\\s*\\+\\s*(?:Enter|Return)/i.test(hint.textContent)) hint.remove();
+        }
+        // Recover figures from inert media components that supply image records as JSON.
+        const scope = heading?.closest('article, section, main') || doc.body;
+        for (const element of scope.querySelectorAll('*')) {
+          if (!(element instanceof HTMLUnknownElement) && !element.localName.includes('-')) continue;
+          if (element.childElementCount || element.textContent.trim()) continue;
+          for (const attr of element.attributes) {
+            if (!attr.value.trimStart().startsWith('{')) continue;
+            let data;
+            try { data = JSON.parse(attr.value); } catch { continue; }
+            const items = data.items || data.images;
+            if (!Array.isArray(items)) continue;
+            const figures = [];
+            for (const item of items) {
+              const src = item?.img || item?.src || item?.image;
+              const label = item?.caption || item?.subtitle || item?.description;
+              if (typeof src !== 'string' || typeof label !== 'string') continue;
+              let url;
+              try { url = new URL(src, base.href); } catch { continue; }
+              if (url.protocol !== 'https:') continue;
+              const fig = doc.createElement('figure');
+              const img = doc.createElement('img');
+              img.src = url.href;
+              const caption = doc.createElement('figcaption');
+              const text = new DOMParser().parseFromString(label, 'text/html').body.textContent.trim();
+              const credit = Object.entries(item).find(([key, value]) =>
+                /^(?:credit|copyright)/i.test(key) && typeof value === 'string' && value.trim() && !/^https?:/i.test(value));
+              caption.textContent = [text, credit?.[1]].filter(Boolean).join(' — ');
+              fig.append(img, caption);
+              figures.push(fig);
+            }
+            if (figures.length) { element.replaceWith(...figures); break; }
+          }
+        }
+        const main = doc.querySelector('main, [role="main"], article');
+        const imageFallback = main?.querySelector('img') ? main.innerHTML : '';
+        const parsed = new Readability(doc).parse();
+        const result = doc.createElement('div');
+        result.innerHTML = parsed?.content || imageFallback;
+        if (result.childNodes.length) {
+          const header = doc.createElement('header');
+          for (const value of [subtitle, author || parsed?.byline]) {
+            const text = value?.trim();
+            if (!text || [...header.children].some(line => line.textContent === text)) continue;
+            const existing = [...result.querySelectorAll('p, div, [rel~=author]')].find(node =>
+              !node.querySelector('img, figure, video') && normalizeTitle(node.textContent) === normalizeTitle(text));
+            if (existing) existing.remove();
+            const line = doc.createElement('p');
+            line.textContent = text;
+            header.append(line);
+          }
+          if (header.childElementCount) result.prepend(header);
+        }
+        result.innerHTML;
+        """
         let extractor = await ArticleExtractor()
         return try await extractor.extract(script: script, url: url)
     }

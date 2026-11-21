@@ -2,96 +2,30 @@ import Foundation
 import SwiftSoup
 
 public enum ContentRules {
-    public static let revision = 4
-    public static let telegramNotice = "НАСТОЯЩИЙ МАТЕРИАЛ ПРОИЗВЕДЕН ИНОСТРАННЫМ АГЕНТОМ ГАЛЛЯМОВЫМ АББАСОМ РАДИКОВИЧЕМ. 18+"
-    public static let telegramNoticeVariant = telegramNotice.replacingOccurrences(of: "ПРОИЗВЕДЕН ИНОСТРАННЫМ", with: "ПРОИЗВЕДЕН И РАСПРОСТРАНЕН ИНОСТРАННЫМ")
-    public static func defaultHiddenText(address: String) -> String {
-        address.lowercased().replacingOccurrences(of: "@", with: "") == "abbasgallyamovpolitics" ? telegramNotice + "\n" + telegramNoticeVariant : ""
-    }
+    public static let revision = 9
+
+    public static let adSelector = ".ad, .ads, .advertisement, .ad-banner, .adv-banner, [id^=ad-banner-], [id^=adv-banner-], [data-ad], [data-ad-client], [data-ad-slot], [data-erid]"
+    public static let bannerLinkPattern = #"^[^?#]*\?(?:[^&#]*&)*utm_medium=[^&#]*banner[^&#]*(?:[&#]|$)"#
+
     public static func isTelegram(_ url: String) -> Bool { URL(string: url)?.host?.lowercased() == "t.me" }
-    public static func articleBody(page: String, url: String) throws -> String? {
-        let document = try SwiftSoup.parse(page, url)
-        let host = URL(string: url)?.host?.lowercased() ?? ""
-        try removeAds(document, host: host)
-        if ["f1news.ru", "www.f1news.ru"].contains(host), URL(string: url)?.path.hasPrefix("/gallery/") == true {
-            let images = try document.select(".b-gallery__media img, img.giThumbnail")
-            var seen = Set<String>()
-            var gallery = ""
-            for image in images {
-                guard var source = MediaURL.resolve(try image.attr("src"), baseURL: url) else { continue }
-                if let parsed = URL(string: source), let range = parsed.path.range(of: "/gallery/") {
-                    // The gallery thumbnails point to cropped copies; the photo page
-                    // uses this full-size publisher CDN path.
-                    source = "https://bc.f1ne.ws" + String(parsed.path[range.lowerBound...])
-                }
-                guard !source.isEmpty, seen.insert(source).inserted else { continue }
-                try image.attr("src", source)
-                gallery += "<figure>" + (try image.outerHtml()) + "</figure>"
-            }
-            if !gallery.isEmpty {
-                if let next = try document.select(".pagination a[rel=next]").first() {
-                    try next.attr("href", next.absUrl("href"))
-                    try next.text("More gallery photos")
-                    gallery += "<p>" + (try next.outerHtml()) + "</p>"
-                }
-                return gallery
-            }
-        }
-        let selector: String
-        switch host {
-        case "nplus1.ru", "www.nplus1.ru": selector = "[data-heading-wrap]"
-        case "f1news.ru", "www.f1news.ru": selector = "article.post .post_content"
-        case "macrumors.com", "www.macrumors.com": selector = "article .js-content"
-        default: return nil
-        }
-        guard let selected = try document.select(selector).first(), !(try selected.text()).isEmpty else { return nil }
-        let body: Element
-        if host == "nplus1.ru" || host == "www.nplus1.ru" {
-            // One story contains multiple material blocks. The read-next section
-            // sits outside data-heading-wrap; retain every block of the current story.
-            let blocks = try selected.select(".n1_material, figure")
-            guard !blocks.isEmpty() else { return nil }
-            let joined = try blocks.map { try $0.outerHtml() }.joined(separator: "\n")
-            guard let content = try SwiftSoup.parse(joined, url).body() else { return nil }
-            body = content
-        } else { body = selected }
-        try body.select("script, style, nav, aside, .banner, .inpage_container, .post_error, .post_error_mobile, .post_more").remove()
-        // Normalize lazy and relative image sources before dropping the page's base URL.
-        for image in try body.select("img") {
-            let lazy = try image.attr("data-src")
-            if !lazy.isEmpty { try image.attr("src", lazy) }
-            if let absolute = MediaURL.resolve(try image.attr("src"), baseURL: url) { try image.attr("src", absolute) }
-        }
-        return try body.html()
-    }
-    public static func clean(_ document: Document, url: String, hiddenText: String) throws {
-        let host = URL(string: url)?.host?.lowercased() ?? ""
-        try removeAds(document, host: host)
-        if host == "www.macrumors.com" || host == "macrumors.com" {
-            // Fallback for already-cached extraction and feed content.
-            for heading in try document.select("h1,h2,h3,h4") where try heading.text().trimmingCharacters(in: .whitespacesAndNewlines) == "Popular Stories" {
-                var next = try heading.nextElementSibling()
-                while let node = next { next = try node.nextElementSibling(); try node.remove() }
-                try heading.remove()
-            }
-        }
-        if host == "www.f1news.ru" || host == "f1news.ru" {
-            try document.select(".post_error, .post_error_mobile, .post_more").remove()
-            for phrase in ["Нашли опечатку? Выделите её и нажмите Ctrl+Enter!", "Нашли опечатку? Выделите её и нажмите кнопку поиска.", "Предыдущая новость", "Следующая новость"] {
-                try removeText(phrase, from: document)
-            }
-        }
-        if hiddenText.contains(telegramNotice) {
-            try removeText(telegramNoticeVariant, from: document)
-        }
+
+    public static func clean(_ document: Document, hiddenText: String) throws {
+        try removeAds(from: document)
         for phrase in hiddenText.components(separatedBy: .newlines) where !phrase.trimmingCharacters(in: .whitespaces).isEmpty {
             try removeText(phrase, from: document)
         }
     }
-    private static func removeAds(_ document: Document, host: String) throws {
-        guard host == "nplus1.ru" || host == "www.nplus1.ru" else { return }
-        try document.select(".ad, .ads, .advertisement, .banner, [data-ad], [data-ad-client], [data-erid], [id^=adfox], [class*=header-bidding], [class*=adv-banner], [id*=adv-banner], iframe").remove()
+
+    public static func removeAds(from document: Document) throws {
+        try document.select(adSelector).remove()
+        for link in try document.select("a[href]:has(img)") {
+            if try link.text().isEmpty,
+               try link.attr("href").range(of: bannerLinkPattern, options: [.regularExpression, .caseInsensitive]) != nil {
+                try link.remove()
+            }
+        }
     }
+
     // Remove only matching text across inline tags, retaining all surrounding markup.
     private static func removeText(_ phrase: String, from document: Document) throws {
         var nodes: [TextNode] = []

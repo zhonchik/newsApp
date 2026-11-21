@@ -231,12 +231,14 @@ actor MediaCache {
     /// Subscription refresh warms images/posters, never video data.
     func prefetchImages(_ html: String, feed: String = "", baseURL: String, force: Bool = false) async throws {
         let fallback = try SwiftSoup.parse(feed, baseURL)
+        try ContentRules.removeAds(from: fallback)
         let feedSources = try fallback.select("img[src]").compactMap { image in
             MediaURL.resolve(try image.attr("src"), baseURL: baseURL)
         }
-        let doc = try SwiftSoup.parse(html + feed, baseURL)
+        let doc = try SwiftSoup.parse(html, baseURL)
+        try ContentRules.removeAds(from: doc)
         var urls = Set<URL>()
-        for image in try doc.select("img[src], video[poster]") {
+        for image in try doc.select("img[src], video[poster]").array() + fallback.select("img[src], video[poster]").array() {
             let isImage = image.tagName() == "img"
             guard let source = MediaURL.resolve(try image.attr(isImage ? "src" : "poster"), baseURL: baseURL) else { continue }
             let original = isImage ? MediaURL.originalImage(for: source, in: feedSources) : nil

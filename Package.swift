@@ -9,8 +9,9 @@ let package = Package(
     targets: [
         .target(name: "ReaderContent", dependencies: ["SwiftSoup"], path: "ReaderContent"),
         .target(name: "ReaderRuntime", dependencies: ["ReaderContent", "SwiftSoup"], path: "App",
-                exclude: ["Assets.xcassets", "Resources", "ArticlePreparation.swift", "ArticleWebView.swift", "HybridArticleReader.swift", "CurrentApp.swift", "FeedService.swift", "ReaderAppDelegate.swift", "ReaderState.swift", "ReaderView.swift", "SettingsView.swift", "SubscriptionsView.swift", "ThemeSettings.swift"],
-                sources: ["NativeArticleView.swift", "NativeArticleBody.swift", "ReaderPage.swift", "ReaderAppearance.swift", "ReaderPresentation.swift", "Models.swift", "LibraryWorker.swift", "MediaCache.swift"]),
+                exclude: ["Assets.xcassets", "Resources/Readability-LICENSE.md", "ArticlePreparation.swift", "ArticleWebView.swift", "HybridArticleReader.swift", "CurrentApp.swift", "ReaderAppDelegate.swift", "ReaderState.swift", "ReaderView.swift", "SettingsView.swift", "SubscriptionsView.swift", "ThemeSettings.swift"],
+                sources: ["FeedService.swift", "NativeArticleView.swift", "NativeArticleBody.swift", "ReaderPage.swift", "ReaderAppearance.swift", "ReaderPresentation.swift", "Models.swift", "LibraryWorker.swift", "MediaCache.swift"],
+                resources: [.copy("Resources/Readability.js")]),
         .testTarget(name: "ReaderContentTests", dependencies: ["ReaderContent"]),
         .testTarget(name: "ReaderRuntimeTests", dependencies: ["ReaderRuntime", "ReaderContent"])
     ]

@@ -14,11 +14,6 @@ public enum ArticleIdentity {
     }
     public static func imageKey(_ raw: String) -> String {
         guard let url = URL(string: raw) else { return raw }
-        let path = url.path
-        // MacRumors serves one original through many hash/size/crop CDN paths.
-        if url.host?.hasSuffix("macrumors.com") == true, let range = path.range(of: "/article-new/") {
-            return String(path[range.lowerBound...])
-        }
-        return path
+        return url.path
     }
 }

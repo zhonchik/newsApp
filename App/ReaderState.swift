@@ -66,6 +66,7 @@ import os
             starting = false
             if let current, document?.key == current.key { try? await MediaCache.shared.remember(current) }
             if displayedKey == selection || current == nil || articleError != nil { beginBackgroundWork() }
+            if let current { await refreshStaleArticle(current) }
         } catch {
             startupError = error.localizedDescription
             starting = false
@@ -134,9 +135,18 @@ import os
             guard !Task.isCancelled, selection == key, loadRequest == request else { return }
             try await worker.markOpened(key)
             try await reloadSnapshot()
+            await refreshStaleArticle(link)
             if backgroundStarted, selection == articles.last?.key { await refresh() }
         } catch is CancellationError { }
         catch { if !Task.isCancelled && loadRequest == request && selection == key { pageFailed(error.localizedDescription) } }
+    }
+
+    private func refreshStaleArticle(_ link: ArticleLink) async {
+        guard !ContentRules.isTelegram(link.url), let displayed = document,
+              displayed.key == link.key, (1..<ContentRules.revision).contains(displayed.contentRevision) else { return }
+        guard let content = try? await preparation.prepare(link), content.revision >= ContentRules.revision,
+              !Task.isCancelled, selection == link.key, document == displayed else { return }
+        document = ReaderDocument(link, content: content)
     }
     func move(_ offset: Int) {
         guard let index = queue.indexByKey[selection], articles.indices.contains(index + offset) else {

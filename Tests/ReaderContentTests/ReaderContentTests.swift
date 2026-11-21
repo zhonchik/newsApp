@@ -2,25 +2,33 @@ import XCTest
 @testable import ReaderContent
 
 final class ReaderContentTests: XCTestCase {
-    let base = "https://www.f1news.ru/news/f1-192505.html"
-    let feed = "<img src='https://c.f1news.ru/userfiles/claire_williams/192505.jpg'><p>Summary</p>"
+    let base = "https://publisher.example/news/article"
+    let feed = "<img src='https://cdn.example.com/photos/cover.jpg'><p>Summary</p>"
     func testFeedPhotoSurvivesFullTextReplacement() throws {
         let result = try ReaderContent.html(body: "<p>Complete article</p>", feed: feed, baseURL: base)
-        XCTAssertTrue(result.contains("192505.jpg"))
+        XCTAssertTrue(result.contains("cover.jpg"))
         XCTAssertTrue(result.contains("Complete article"))
         XCTAssertFalse(result.contains("Summary"))
     }
     func testExtractedPhotoAvoidsDuplicateFeedPhoto() throws {
-        let result = try ReaderContent.html(body: "<img src='//bc.f1ne.ws/userfiles/claire_williams/192505.jpg'><p>Article</p>", feed: feed, baseURL: base)
-        XCTAssertTrue(result.contains("https://bc.f1ne.ws/"))
-        XCTAssertFalse(result.contains("https://c.f1news.ru/"))
+        let result = try ReaderContent.html(body: "<img src='//images.example/photos/cover.jpg'><p>Article</p>", feed: feed, baseURL: base)
+        XCTAssertTrue(result.contains("https://images.example/"))
+        XCTAssertFalse(result.contains("https://cdn.example.com/"))
     }
-    func testNPlusOneLeadPhotoSurvivesUnrelatedExtractedImages() throws {
-        let photo = "https://minio.nplus1.ru/app-images/media-revisions/1153047/cover-share.png"
-        let result = try ReaderContent.html(body: "<img src='https://staticn1.nplus1.ru/image-new/logo.svg'><p>Full story</p>", feed: "<img src='\(photo)'><p>Summary</p>", baseURL: "https://nplus1.ru/news/2026/11/11/obesity-vs-obesity")
+    func testLeadPhotoSurvivesUnrelatedExtractedImages() throws {
+        let photo = "https://cdn.example.com/photos/cover-share.png"
+        let result = try ReaderContent.html(body: "<img src='https://assets.example/logo.svg'><p>Full story</p>", feed: "<img src='\(photo)'><p>Summary</p>", baseURL: "https://publisher.example/news/article")
         XCTAssertTrue(result.contains(photo))
         XCTAssertTrue(result.contains("Full story"))
         XCTAssertFalse(result.contains("Summary"))
+    }
+    func testCaptionedLeadAndBylinePrecedeSupplementaryFeedImage() throws {
+        let body = "<header><p>By Alex</p></header><figure><img src='/river.jpg'><figcaption>Upper river</figcaption></figure><p>Full story</p>"
+        let result = try ReaderContent.html(body: body, feed: feed, baseURL: base)
+        let markers = ["By Alex", "river.jpg", "Upper river", "Full story", "cover.jpg"]
+        XCTAssertTrue(result.contains("<figcaption>"))
+        let positions = try markers.map { try XCTUnwrap(result.range(of: $0)).lowerBound }
+        XCTAssertEqual(positions, positions.sorted())
     }
     func testUnsafeFeedMarkupIsNotInserted() throws {
         let result = try ReaderContent.html(body: "<p>Article</p>", feed: "<script>alert(1)</script><img src='javascript:alert(1)'>", baseURL: base)

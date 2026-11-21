@@ -8,16 +8,6 @@ import SwiftData
 @ModelActor actor LibraryWorker {
     func migrateLibrary() throws {
             let modelContext = freshContext()
-            let subscriptions = try modelContext.fetch(FetchDescriptor<Subscription>())
-            for subscription in subscriptions {
-                if !subscription.contentDefaultsApplied {
-                    subscription.hiddenText = ContentRules.defaultHiddenText(address: subscription.address)
-                    subscription.contentDefaultsApplied = true
-                }
-                if subscription.hiddenText == ContentRules.telegramNotice {
-                    subscription.hiddenText += "\n" + ContentRules.telegramNoticeVariant
-                }
-            }
             let positions = try modelContext.fetch(FetchDescriptor<ReadingPosition>())
             let all = try modelContext.fetch(FetchDescriptor<Article>()).sorted {
                 if $0.queuePosition != $1.queuePosition { return $0.queuePosition < $1.queuePosition }
