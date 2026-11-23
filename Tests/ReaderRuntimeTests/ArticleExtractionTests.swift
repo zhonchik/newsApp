@@ -83,6 +83,34 @@ final class ArticleExtractionTests: XCTestCase {
         XCTAssertFalse(result.contains("Tap to report"))
     }
 
+    func testExtractionKeepsUncaptionedGalleryImagesAndRemovesRepeatedTitle() async throws {
+        let page = """
+        <meta property="og:title" content="River survey"><main><article>
+          <h1>River survey</h1><p>\(prose("The survey begins."))</p>
+          <photo-view data-gallery='{"images":[{"src":"/one.jpg","caption":null},{"src":"/two.jpg"}]}'></photo-view>
+          <h2>Further findings</h2><p>\(prose("The survey continues."))</p>
+        </article></main>
+        """
+        let result = try await FeedService.extractArticle(page: page, url: "https://publisher.example/story")
+        XCTAssertTrue(result.contains("/one.jpg"))
+        XCTAssertTrue(result.contains("/two.jpg"))
+        XCTAssertTrue(result.contains("Further findings"))
+        XCTAssertFalse(result.contains("River survey"))
+    }
+
+    func testExtractionExcludesRecommendationsOutsideSemanticArticle() async throws {
+        let page = """
+        <main><article><h1>River survey</h1><p>\(prose("The requested story."))</p></article>
+        <section><h2>Popular Stories</h2>
+          <article><h3>Other news</h3><p>\(prose("An unrelated story."))</p></article>
+        </section></main>
+        """
+        let result = try await FeedService.extractArticle(page: page, url: "https://publisher.example/story")
+        XCTAssertTrue(result.contains("The requested story."))
+        XCTAssertFalse(result.contains("Popular Stories"))
+        XCTAssertFalse(result.contains("An unrelated story."))
+    }
+
     private func prose(_ opening: String) -> String {
         opening + """
          Local volunteers recorded changes across the site over several months. The survey team compared observations from each visit, recorded the results in a field notebook, and discussed the findings with residents before publishing the report.

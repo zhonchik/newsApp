@@ -51,7 +51,7 @@ struct NativeArticleView: View {
     }
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 16) {
                 Text("\(article.source) · \(article.published.formatted(date: .abbreviated, time: .omitted))")
                     .font(.caption)
                 if !ContentRules.isTelegram(article.url) {
@@ -181,6 +181,7 @@ private struct ArticleVideo: View {
                         Image(systemName: "play.circle.fill").font(.largeTitle).foregroundStyle(.white)
                     }
                 }.buttonStyle(.plain).accessibilityLabel("Play video")
+                .highPriorityGesture(DragGesture(minimumDistance: 10))
             }
         }.aspectRatio(16/9, contentMode: .fit)
         .task(id: playing) {
@@ -201,7 +202,10 @@ private struct YouTubeBlock: View {
     var body: some View {
         Group {
             if showing { EmbeddedYouTube(id: id) }
-            else { Button("Play YouTube video", systemImage: "play.rectangle.fill") { showing = true } }
+            else {
+                Button("Play YouTube video", systemImage: "play.rectangle.fill") { showing = true }
+                    .highPriorityGesture(DragGesture(minimumDistance: 10))
+            }
         }.frame(maxWidth: .infinity).aspectRatio(16/9, contentMode: .fit)
     }
 }

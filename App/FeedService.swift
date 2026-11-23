@@ -150,7 +150,7 @@ actor FeedService {
             for (const item of items) {
               const src = item?.img || item?.src || item?.image;
               const label = item?.caption || item?.subtitle || item?.description;
-              if (typeof src !== 'string' || typeof label !== 'string') continue;
+              if (typeof src !== 'string') continue;
               let url;
               try { url = new URL(src, base.href); } catch { continue; }
               if (url.protocol !== 'https:') continue;
@@ -158,7 +158,7 @@ actor FeedService {
               const img = doc.createElement('img');
               img.src = url.href;
               const caption = doc.createElement('figcaption');
-              const text = new DOMParser().parseFromString(label, 'text/html').body.textContent.trim();
+              const text = new DOMParser().parseFromString(typeof label === 'string' ? label : '', 'text/html').body.textContent.trim();
               const credit = Object.entries(item).find(([key, value]) =>
                 /^(?:credit|copyright)/i.test(key) && typeof value === 'string' && value.trim() && !/^https?:/i.test(value));
               caption.textContent = [text, credit?.[1]].filter(Boolean).join(' — ');
@@ -170,19 +170,29 @@ actor FeedService {
         }
         // Remove footer controls before Readability scores nodes or the image fallback copies them.
         for (const footer of doc.querySelectorAll('footer, [role="contentinfo"]')) footer.remove();
+        // A semantic article boundary excludes sibling recommendations and sidebars.
+        const primaryArticle = heading?.closest(articleElement);
+        if (primaryArticle && primaryArticle.querySelector('p')) {
+          doc.body.replaceChildren(primaryArticle);
+        }
         const main = doc.querySelector('main, [role="main"], article');
         const imageFallback = main?.querySelector('img') ? main.innerHTML : '';
+        const headline = normalizeTitle(heading?.textContent);
         const parsed = new Readability(doc).parse();
         const result = doc.createElement('div');
         result.innerHTML = parsed?.content || imageFallback;
+        // Readability can downgrade the source h1 to h2; the reader supplies the title.
+        for (const node of result.querySelectorAll('h1, h2, [role="heading"][aria-level="1"]')) {
+          if (headline && normalizeTitle(node.textContent) === headline) node.remove();
+        }
         if (result.childNodes.length) {
           const header = doc.createElement('header');
           for (const value of [subtitle, author || parsed?.byline]) {
             const text = value?.trim();
             if (!text || [...header.children].some(line => line.textContent === text)) continue;
-            const existing = [...result.querySelectorAll('p, div, [rel~=author]')].find(node =>
+            const existing = [...result.querySelectorAll('p, div, [rel~=author]')].filter(node =>
               !node.querySelector('img, figure, video') && normalizeTitle(node.textContent) === normalizeTitle(text));
-            if (existing) existing.remove();
+            for (const node of existing) node.remove();
             const line = doc.createElement('p');
             line.textContent = text;
             header.append(line);
