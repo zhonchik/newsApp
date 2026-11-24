@@ -14,6 +14,31 @@ final class NativeLayoutTests: XCTestCase {
         XCTAssertEqual(ReaderAppearance.bodyWeight(dark: true, increasedContrast: true), 400)
     }
 
+    @MainActor func testNativeReaderRestoresSavedScrollOffset() async throws {
+        let document = ReaderDocument(url: URL(string: "https://publisher.example/story")!, title: "Long article", html: "")
+        let body = NativeArticleBody(blocks: (0..<80).map { index in
+            .text(.paragraph, [NativeArticleBody.Run(text: "Paragraph \(index). A long article keeps its reading position when reopened.")])
+        })
+        let host = NSHostingView(rootView: NativeArticleView(content: body, article: document, palette: .saved(),
+            onDisplay: {}, reload: {}, move: { _ in }, initialOffset: 420))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 650), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFrontRegardless()
+        defer { window.orderOut(nil) }
+        func findScroll(_ view: NSView) -> NSScrollView? {
+            if let scroll = view as? NSScrollView { return scroll }
+            return view.subviews.compactMap(findScroll).first
+        }
+        var restored = false
+        for _ in 0..<40 {
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+            if let scroll = findScroll(host), abs(scroll.contentView.bounds.minY - 420) < 1 {
+                restored = true; break
+            }
+        }
+        XCTAssertTrue(restored, "The native scroll view must restore the saved point offset")
+    }
+
     @MainActor func testCachedPhotosAppearInNativeRSSAndTelegramLayouts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

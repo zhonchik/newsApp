@@ -1,4 +1,30 @@
 enum ReaderPresentation {
+    static func navigation(initialOffset: Double) -> String {
+        """
+        let restoring = \(initialOffset);
+        const restoreUntil = Date.now() + 8000;
+        const reportScroll = () => window.webkit.messageHandlers.readerScroll.postMessage(window.scrollY);
+        const restore = () => {
+          if (restoring === null) return;
+          window.scrollTo(0, restoring);
+          if (Date.now() >= restoreUntil) { restoring = null; reportScroll(); }
+        };
+        const stopRestore = () => { restoring = null; };
+        for (const type of ['touchstart', 'pointerdown', 'wheel', 'keydown'])
+          document.addEventListener(type, stopRestore, {passive: true});
+        new ResizeObserver(restore).observe(document.body);
+        setTimeout(restore, 8100);
+        window.addEventListener('scroll', () => { if (restoring === null) reportScroll(); }, {passive: true});
+        document.addEventListener('click', event => {
+          const link = event.target.closest('a[href]');
+          if (!link) return;
+          event.preventDefault();
+          reportScroll();
+          window.webkit.messageHandlers.readerLink.postMessage({url: link.href, external: link.hasAttribute('data-reader-original-link')});
+        });
+        """
+    }
+
     // Run in WebKit’s isolated client world after parsing the local article.
     static let afterFirstFrame = """
         requestAnimationFrame(function() { requestAnimationFrame(function() {
