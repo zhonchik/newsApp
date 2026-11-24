@@ -11,14 +11,14 @@ final class ReaderHistoryTests: XCTestCase {
         history.select(root); history.scroll(key: root.key, offset: 240)
         history.push(first); history.scroll(key: first.key, offset: 510)
         history.push(second); history.scroll(key: second.key, offset: 890)
-        history.back()
+        XCTAssertTrue(history.back())
         XCTAssertEqual(history.current?.document, first)
         XCTAssertEqual(history.current?.offset, 510)
         history.home()
         XCTAssertEqual(history.current?.document, root)
         XCTAssertEqual(history.current?.offset, 240)
         XCTAssertEqual(history.entries.count, 1)
-        history.back()
+        XCTAssertFalse(history.back(), "At the root, Back must fall through to the previous queue article")
         XCTAssertEqual(history.current?.document, root)
     }
     func testPersistenceIncludesBodiesAndEveryPosition() throws {
@@ -44,6 +44,20 @@ final class ReaderHistoryTests: XCTestCase {
         history.scroll(key: root.key, offset: 700) // A disappearing view cannot change the new selection.
         XCTAssertEqual(history.current?.offset, 0)
     }
+    func testEmptySnapshotDoesNotReplaceSavedRootOrLinkedContent() throws {
+        let root = document("root"), child = document("child")
+        var history = ReaderHistory()
+        history.select(root); history.scroll(key: root.key, offset: 80)
+        history.push(child); history.scroll(key: child.key, offset: 260)
+        let before = history
+        let empty = LibrarySnapshot(articles: [], subscriptions: [], savedKey: "")
+        XCTAssertEqual(history.restoredSelection(root.key, snapshot: empty), root.key)
+        XCTAssertEqual(history, before)
+        let restored = try JSONDecoder().decode(ReaderHistory.self, from: JSONEncoder().encode(history))
+        XCTAssertEqual(restored.current?.document.html, child.html)
+        XCTAssertEqual(restored.entries.map(\.offset), [80, 260])
+    }
+
     func testReloadPreservesPositionAndRepeatedURLsHaveIndependentVisits() {
         let root = document("same"), repeatVisit = document("same")
         XCTAssertNotEqual(root.key, repeatVisit.key)

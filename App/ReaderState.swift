@@ -173,11 +173,11 @@ import os
         defer { os_signpost(.end, log: LaunchMetrics.log, name: "Queue snapshot", signpostID: interval) }
         let snapshot = try await worker.snapshot(previousIndices: previousIndices)
         queue = snapshot
-        let restored = snapshot.restoredSelection(selection)
+        // A temporarily empty/incomplete store (for example during cloud restoration)
+        // must not discard the only saved copy of the active reading session.
+        let restored = history.restoredSelection(selection, snapshot: snapshot)
         if selection != restored { selection = restored }
-        if selection.isEmpty {
-            cancelLink(); document = nil; history = ReaderHistory(); saveHistory()
-        }
+        if selection.isEmpty { document = nil }
         return snapshot.addedCount
     }
     func loadSelected() async {
@@ -226,13 +226,18 @@ import os
     }
     func move(_ offset: Int) {
         cancelLink()
-        if offset < 0 {
-            history.back(); document = history.current?.document ?? document
+        if offset < 0 && history.back() {
+            document = history.current?.document ?? document
             articleError = nil; saveHistory()
             return
         }
         home()
-        guard let index = queue.indexByKey[selection], articles.indices.contains(index + offset) else {
+        guard let index = queue.indexByKey[selection] else {
+            if offset > 0, let key = firstUnread ?? articles.first?.key { selection = key }
+            else if offset > 0 { Task { await refresh() } }
+            return
+        }
+        guard articles.indices.contains(index + offset) else {
             if offset > 0 { Task { await refresh() } }
             return
         }

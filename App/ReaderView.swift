@@ -76,7 +76,7 @@ struct ReaderView: View {
                initialOffset: document.map { reader.scrollOffset(for: $0.key) } ?? 0,
                onScroll: reader.recordScroll, openLink: reader.openLink)
                 .accessibilityAction(named: "Next article") { reader.move(1) }
-                .accessibilityAction(named: "Back to previous linked article") { reader.move(-1) }
+                .accessibilityAction(named: "Previous article") { reader.move(-1) }
                 .overlay {
                     if let error = reader.articleError ?? library.error ?? (reader.articles.isEmpty ? reader.startupError : nil) {
                         VStack {
