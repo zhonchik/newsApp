@@ -30,7 +30,7 @@ struct ArticleWebView {
         config.websiteDataStore = .default()
         config.setURLSchemeHandler(MediaSchemeHandler(), forURLScheme: "reader-media")
         // Isolated app script: publisher scripts remain blocked by the document CSP.
-        coordinator.onScroll = onScroll; coordinator.openLink = openLink
+        coordinator.initialOffset = initialOffset; coordinator.onScroll = onScroll; coordinator.openLink = openLink
         let playbackScript = """
         \(ReaderPresentation.navigation(initialOffset: initialOffset))
         \(ReaderPresentation.afterFirstFrame)
@@ -81,7 +81,7 @@ struct ArticleWebView {
         return webView
     }
     @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
-        coordinator.onScroll = onScroll; coordinator.openLink = openLink
+        coordinator.initialOffset = initialOffset; coordinator.onScroll = onScroll; coordinator.openLink = openLink
         coordinator.move = move; coordinator.reload = reload; coordinator.onDisplay = onDisplay; coordinator.onFailure = onFailure; webView.move = move
         applyBackground(webView)
         guard let article else { return }
@@ -114,6 +114,7 @@ struct ArticleWebView {
         #endif
     }
     @MainActor class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        var initialOffset: Double = 0
         var onScroll: (Double) -> Void = { _ in }
         var openLink: (URL) -> Void = { _ in }
         var move: (Int) -> Void
@@ -147,7 +148,8 @@ struct ArticleWebView {
         }
         func load(_ html: String, in webView: ReaderWebView) {
             LaunchMetrics.mark("Article navigation started")
-            activeNavigation = webView.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
+            let positionedHTML = html.replacingOccurrences(of: "<html ", with: "<html data-reader-scroll=\"\(initialOffset)\" ")
+            activeNavigation = webView.loadHTMLString(positionedHTML, baseURL: URL(string: "https://com.currentreader.current/"))
             LaunchMetrics.mark("Article navigation submitted")
             loadTimeout?.cancel()
             loadTimeout = Task { @MainActor [weak self, weak webView] in

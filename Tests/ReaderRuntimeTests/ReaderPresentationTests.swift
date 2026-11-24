@@ -14,14 +14,14 @@ final class ReaderPresentationTests: XCTestCase {
         for name in ["readerReady", "readerLink", "readerScroll"] {
             config.userContentController.add(observer, contentWorld: .defaultClient, name: name)
         }
-        let script = ReaderPresentation.navigation(initialOffset: 420) + "\nwindow.webkit.messageHandlers.readerReady.postMessage('ready');"
+        let script = ReaderPresentation.navigation(initialOffset: 10) + "\nwindow.webkit.messageHandlers.readerReady.postMessage('ready');"
         config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         let web = WKWebView(frame: window.contentLayoutRect, configuration: config)
         window.contentView = web; window.orderFrontRegardless()
         defer { window.orderOut(nil) }
-        web.loadHTMLString("<body style='height:4000px'><a id='internal' href='https://publisher.example/linked' target='_blank'>Linked</a><a id='original' href='https://publisher.example/root' data-reader-original-link>Original article</a></body>", baseURL: URL(string: "https://publisher.example/root"))
+        web.loadHTMLString("<html data-reader-scroll='420'><body style='height:4000px'><a id='internal' href='https://publisher.example/linked' target='_blank'>Linked</a><a id='original' href='https://publisher.example/root' data-reader-original-link>Original article</a></body></html>", baseURL: URL(string: "https://publisher.example/root"))
         await fulfillment(of: [ready], timeout: 20)
         var offset: Double = 0
         for _ in 0..<20 {

@@ -1,7 +1,7 @@
 enum ReaderPresentation {
     static func navigation(initialOffset: Double) -> String {
         """
-        let restoring = \(initialOffset);
+        let restoring = Number(document.documentElement.getAttribute('data-reader-scroll') ?? \(initialOffset));
         const restoreUntil = Date.now() + 8000;
         const reportScroll = () => window.webkit.messageHandlers.readerScroll.postMessage(window.scrollY);
         const restore = () => {
