@@ -34,6 +34,73 @@ import os
 
     var firstUnread: String? { queue.firstUnread }
 
+    @Published private(set) var history = ReaderHistory()
+    @Published var openingLink = false
+    @Published var linkError: String?
+    private var linkTask: Task<Void, Never>?
+    private var historySave: Task<Void, Never>?
+    private var navigationID = UUID()
+    private static var historyFile: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Current/reader-history.json")
+    }
+    var canGoHome: Bool { history.canGoHome }
+    func scrollOffset(for key: String) -> Double {
+        history.entries.first(where: { $0.document.key == key })?.offset ?? 0
+    }
+    init() {
+        if let data = try? Data(contentsOf: Self.historyFile),
+           let saved = try? JSONDecoder().decode(ReaderHistory.self, from: data), let root = saved.root {
+            history = saved; document = saved.current?.document; selection = root.key
+        }
+    }
+    func saveHistory() {
+        historySave?.cancel()
+        do {
+            let file = Self.historyFile
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(history).write(to: file, options: .atomic)
+        } catch { updateFailed = true; updateMessage = "Could not save reading position: " + error.localizedDescription }
+    }
+    func recordScroll(key: String, offset: Double) {
+        guard history.entries.contains(where: { $0.document.key == key }) else { return }
+        history.scroll(key: key, offset: offset)
+        historySave?.cancel()
+        historySave = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            self?.saveHistory()
+        }
+    }
+    private func cancelLink() {
+        navigationID = UUID(); linkTask?.cancel(); linkTask = nil; openingLink = false
+    }
+    func home() {
+        cancelLink(); history.home(); document = history.current?.document
+        articleError = nil; saveHistory()
+    }
+    func openLink(_ url: URL) {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
+              let original = document else { return }
+        if history.root == nil { history.select(original) }
+        cancelLink(); loadRequest = nil
+        let request = navigationID
+        openingLink = true; articleError = nil; linkError = nil
+        linkTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await service.articleContent(url: url.absoluteString)
+                guard !Task.isCancelled, navigationID == request, document?.key == original.key else { return }
+                guard !result.html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw URLError(.cannotParseResponse) }
+                let linked = ReaderDocument(url: url, title: result.title, html: result.html)
+                history.push(linked); document = linked; openingLink = false; saveHistory()
+            } catch {
+                guard !Task.isCancelled, navigationID == request else { return }
+                openingLink = false
+                linkError = error.localizedDescription
+            }
+        }
+    }
+
     func start(library: LibraryContainer) async {
         guard worker == nil, !opening else { return }
         opening = true; starting = true; startupError = nil
@@ -42,9 +109,9 @@ import os
             let background = try await library.worker()
             worker = background
             // Publish the saved body before any all-library scan or migration.
-            if let cached = try await background.launchDocument(restored: library.launchDocument) {
+            if document == nil, let cached = try await background.launchDocument(restored: library.launchDocument) {
                 LaunchMetrics.mark("Saved database article available")
-                document = cached; selection = cached.key
+                document = cached; selection = cached.key; history.select(cached)
             }
             if let document, displayedKey != document.key, articleError == nil { return }
             await loadInitialQueue()
@@ -65,7 +132,7 @@ import os
             LaunchMetrics.mark("Queue available")
             starting = false
             if let current, document?.key == current.key { try? await MediaCache.shared.remember(current) }
-            if displayedKey == selection || current == nil || articleError != nil { beginBackgroundWork() }
+            if displayedKey == document?.key || current == nil || articleError != nil { beginBackgroundWork() }
             if let current { await refreshStaleArticle(current) }
         } catch {
             startupError = error.localizedDescription
@@ -78,7 +145,7 @@ import os
         displayedKey = key
         if starting && key == document?.key {
             Task { await loadInitialQueue() }
-        } else if !starting && key == selection { beginBackgroundWork() }
+        } else if !starting && key == document?.key { beginBackgroundWork() }
     }
     func pageFailed(_ message: String) {
         articleError = message
@@ -108,11 +175,18 @@ import os
         queue = snapshot
         let restored = snapshot.restoredSelection(selection)
         if selection != restored { selection = restored }
-        if selection.isEmpty { document = nil }
+        if selection.isEmpty {
+            cancelLink(); document = nil; history = ReaderHistory(); saveHistory()
+        }
         return snapshot.addedCount
     }
     func loadSelected() async {
         guard let worker, let link = current else { return }
+        if history.root?.key == link.key, history.canGoHome {
+            document = history.current?.document
+            return
+        }
+        cancelLink()
         let key = link.key
         let request = UUID()
         loadRequest = request
@@ -131,6 +205,7 @@ import os
             }
             guard !Task.isCancelled, selection == key, loadRequest == request else { return }
             document = ReaderDocument(link, content: content)
+            history.select(document!); saveHistory()
             try? await MediaCache.shared.remember(link)
             guard !Task.isCancelled, selection == key, loadRequest == request else { return }
             try await worker.markOpened(key)
@@ -147,8 +222,16 @@ import os
         guard let content = try? await preparation.prepare(link), content.revision >= ContentRules.revision,
               !Task.isCancelled, selection == link.key, document == displayed else { return }
         document = ReaderDocument(link, content: content)
+        history.update(document!); saveHistory()
     }
     func move(_ offset: Int) {
+        cancelLink()
+        if offset < 0 {
+            history.back(); document = history.current?.document ?? document
+            articleError = nil; saveHistory()
+            return
+        }
+        home()
         guard let index = queue.indexByKey[selection], articles.indices.contains(index + offset) else {
             if offset > 0 { Task { await refresh() } }
             return
@@ -210,6 +293,18 @@ import os
         }
     }
     func reloadArticle() async {
+        if history.canGoHome, let displayed = document, let url = URL(string: displayed.url) {
+            guard !reloadingArticle else { return }
+            reloadingArticle = true
+            defer { reloadingArticle = false }
+            do {
+                let result = try await service.articleContent(url: url.absoluteString)
+                guard document?.key == displayed.key, !Task.isCancelled else { return }
+                let refreshed = displayed.replacingContent(title: result.title, html: result.html)
+                history.update(refreshed); document = refreshed; renderVersion += 1; saveHistory()
+            } catch { updateFailed = true; updateMessage = error.localizedDescription }
+            return
+        }
         guard let link = current, !reloadingArticle else { return }
         reloadingArticle = true
         defer { reloadingArticle = false }
@@ -222,6 +317,7 @@ import os
             catch { imageError = error }
             guard selection == key, !Task.isCancelled else { return }
             document = ReaderDocument(link, content: content)
+            history.update(document!); saveHistory()
             renderVersion += 1
             updateFailed = false
             updateMessage = imageError == nil ? "Article updated" : "Article updated · some images are unavailable"

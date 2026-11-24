@@ -13,6 +13,9 @@ struct NativeArticleView: View {
     let onDisplay: () -> Void
     let reload: () async -> Void
     let move: (Int) -> Void
+    var initialOffset: Double = 0
+    var onScroll: (Double) -> Void = { _ in }
+    var openLink: (URL) -> Void = { _ in }
     var cache = MediaCache.shared
     @Environment(\.colorScheme) private var scheme
 
@@ -60,20 +63,23 @@ struct NativeArticleView: View {
                 ForEach(content.blocks.indices, id: \.self) { index in
                     block(content.blocks[index])
                 }
-                if let url = URL(string: article.url) { Link(destination: url) { Text("Read original").underline() } }
+                if let url = URL(string: article.url) { Link(destination: url) { Text("Original article").underline() }
+                    .environment(\.openURL, OpenURLAction { .systemAction($0) }) }
             }
             .frame(maxWidth: 680, alignment: .leading)
             .padding(.horizontal, 24).padding(.vertical, 16)
             .frame(maxWidth: .infinity)
+            .background(ReaderScrollView(initialOffset: initialOffset, onScroll: onScroll))
             .background { GeometryReader { _ in Color.clear.onAppear { onDisplay() } } }
         }
+        .environment(\.openURL, OpenURLAction { url in openLink(url); return .handled })
         .foregroundStyle(ink)
         .tint(ink)
         .background(color(scheme == .dark ? palette.darkBackground : palette.lightBackground, fallback: scheme == .dark ? "#181818" : "#FFFFFF"))
         .refreshable { await reload() }
         .simultaneousGesture(DragGesture(minimumDistance: 40).onEnded { value in
             let delta = value.translation
-            if abs(delta.width) > max(70, abs(delta.height) * 2) { move(delta.width < 0 ? 1 : -1) }
+            if abs(delta.width) > max(70, abs(delta.height) * 2) { move(delta.width < 0 ? -1 : 1) }
         })
         #if os(macOS)
         .focusable()
