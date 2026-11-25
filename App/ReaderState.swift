@@ -9,6 +9,7 @@ import os
     @Published var selection = ""
     @Published var document: ReaderDocument?
     @Published var starting = true
+    @Published private(set) var queueLoaded = false
     @Published var pageVisible = false
     @Published var updating = false
     @Published var reloadingArticle = false
@@ -113,7 +114,7 @@ import os
                 LaunchMetrics.mark("Saved database article available")
                 document = cached; selection = cached.key; history.select(cached)
             }
-            if let document, displayedKey != document.key, articleError == nil { return }
+            // Queue restoration must not depend on a view firing onAppear again.
             await loadInitialQueue()
         } catch {
             startupError = error.localizedDescription
@@ -132,7 +133,7 @@ import os
             LaunchMetrics.mark("Queue available")
             starting = false
             if let current, document?.key == current.key { try? await MediaCache.shared.remember(current) }
-            if displayedKey == document?.key || current == nil || articleError != nil { beginBackgroundWork() }
+            beginBackgroundWork()
             if let current { await refreshStaleArticle(current) }
         } catch {
             startupError = error.localizedDescription
@@ -173,6 +174,7 @@ import os
         defer { os_signpost(.end, log: LaunchMetrics.log, name: "Queue snapshot", signpostID: interval) }
         let snapshot = try await worker.snapshot(previousIndices: previousIndices)
         queue = snapshot
+        queueLoaded = true
         // A temporarily empty/incomplete store (for example during cloud restoration)
         // must not discard the only saved copy of the active reading session.
         let restored = history.restoredSelection(selection, snapshot: snapshot)

@@ -18,7 +18,10 @@ struct ReaderView: View {
         NavigationStack {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .task { await library.restore() }
+                .task {
+                    await library.restore()
+                    await library.open()
+                }
                 .toolbar { toolbar }
                 .alert("Couldn’t open link", isPresented: Binding(get: { reader.linkError != nil }, set: { if !$0 { reader.linkError = nil } })) {
                     Button("OK") { reader.linkError = nil }
@@ -116,7 +119,7 @@ struct ReaderView: View {
             if reader.openingLink { ProgressView().accessibilityLabel("Opening linked article") }
         }
         ToolbarItem(placement: .principal) {
-            UnreadCountLabel(count: reader.unreadCount, updating: reader.isUpdating, failed: reader.updateFailed, message: reader.updateMessage)
+            UnreadCountLabel(count: reader.unreadCount, loaded: reader.queueLoaded, updating: reader.isUpdating, failed: reader.updateFailed, message: reader.updateMessage)
         }
         ToolbarItem {
             Button {
@@ -133,6 +136,7 @@ struct ReaderView: View {
 
 private struct UnreadCountLabel: View {
     let count: Int
+    let loaded: Bool
     let updating: Bool
     let failed: Bool
     let message: String
@@ -140,7 +144,7 @@ private struct UnreadCountLabel: View {
     @State private var dimCount = false
 
     var body: some View {
-        Text("\(count) unread")
+        Text(loaded ? "\(count) unread" : "Loading articles…")
             .font(.caption.monospacedDigit())
             .foregroundStyle(failed ? Color(red: 0.78, green: 0.40, blue: 0.40) : Color.secondary)
             .opacity(dimCount ? 0.35 : 1)

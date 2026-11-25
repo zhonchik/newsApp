@@ -23,6 +23,44 @@ final class LibraryCacheTests: XCTestCase {
         let updated = try await worker.snapshot()
         XCTAssertTrue(updated.articles[0].read)
     }
+    @MainActor func testDiskLibraryRelaunchPreservesUnreadAndSavedSelection() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let schema = Schema([Article.self, Subscription.self, ReadingPosition.self])
+        let configuration = ModelConfiguration(schema: schema, url: root.appendingPathComponent("library.store"), cloudKitDatabase: .none)
+        var keys: [String] = []
+        do {
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            let context = ModelContext(container)
+            let feed = Subscription(name: "Example", address: "https://publisher.example/feed", kind: "rss")
+            context.insert(feed)
+            for index in 0..<4 {
+                let article = Article(item: item("saved-\(index)"), subscription: feed)
+                article.queuePosition = index + 1
+                article.read = index == 0
+                article.readPosition = index == 0 ? 1 : 0
+                keys.append(article.key); context.insert(article)
+            }
+            context.insert(ReadingPosition(articleKey: keys[0]))
+            try context.save()
+        }
+        for _ in 0..<2 {
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            let worker = await Task.detached { LibraryWorker(modelContainer: container) }.value
+            let cache = MediaCache(directory: root.appendingPathComponent("cache"))
+            let saved = try await worker.launchDocument(cache: cache)
+            XCTAssertEqual(saved?.key, keys[0])
+            try await worker.migrateLibrary()
+            try await worker.migrateContent(cache: cache)
+            let snapshot = try await worker.snapshot()
+            XCTAssertEqual(snapshot.articles.count, 4)
+            XCTAssertEqual(snapshot.unreadCount, 3)
+            XCTAssertEqual(snapshot.savedKey, keys[0])
+            XCTAssertEqual(snapshot.articles.filter { !$0.read }.map(\.key), Array(keys.dropFirst()))
+        }
+    }
+
     @MainActor func testUpgradeCanDisplayLegacySavedBodyBeforeMigration() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
