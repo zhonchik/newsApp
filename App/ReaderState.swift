@@ -254,7 +254,6 @@ import os
         do { try await reloadSnapshot() } catch { outcome.errors.append(error.localizedDescription) }
         let previous = queue.indexByKey
         var needsSnapshot = false
-        var mayPublishEarly = articles.isEmpty
         for subscription in subscriptions {
             do {
                 try Task.checkCancellation()
@@ -268,18 +267,14 @@ import os
                     links = try await worker.importItems(items, subscriptionID: subscription.id)
                 }
                 toCache.append(contentsOf: links)
-                // Populate an empty reader promptly. Otherwise keep the current
-                // article stable until imports for this refresh have finished.
-                if mayPublishEarly && !links.isEmpty {
-                    outcome.newArticles = try await reloadSnapshot(previousIndices: previous)
-                    needsSnapshot = false
-                    mayPublishEarly = false
-                }
             } catch is CancellationError { break }
             catch { outcome.errors.append("\(subscription.name): \(error.localizedDescription)") }
         }
         if needsSnapshot {
-            do { outcome.newArticles = try await reloadSnapshot(previousIndices: previous) }
+            do {
+                try await worker.orderNewImports(after: Set(previous.keys))
+                outcome.newArticles = try await reloadSnapshot(previousIndices: previous)
+            }
             catch { outcome.errors.append(error.localizedDescription) }
         }
         guard !Task.isCancelled else { return }

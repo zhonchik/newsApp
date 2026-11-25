@@ -23,7 +23,7 @@ final class LibraryCacheTests: XCTestCase {
         let updated = try await worker.snapshot()
         XCTAssertTrue(updated.articles[0].read)
     }
-    @MainActor func testSnapshotOrdersUnreadByPublicationAcrossSubscriptions() async throws {
+    @MainActor func testImportBatchOrdersNewArrivalsWithoutReorderingOlderBatches() async throws {
         let container = try makeContainer()
         let context = ModelContext(container)
         for index in 0..<3 {
@@ -36,6 +36,7 @@ final class LibraryCacheTests: XCTestCase {
         }
         try context.save()
         let worker = await Task.detached { LibraryWorker(modelContainer: container) }.value
+        try await worker.orderNewImports(after: [])
         let snapshot = try await worker.snapshot()
         XCTAssertEqual(snapshot.articles.map(\.title), ["Story 2", "Story 1", "Story 0"])
         XCTAssertEqual(snapshot.unreadCount, 3)
@@ -45,6 +46,19 @@ final class LibraryCacheTests: XCTestCase {
         XCTAssertEqual(next.articles.map(\.title), ["Story 2", "Story 1", "Story 0"])
         XCTAssertEqual(next.unreadCount, 2)
         XCTAssertEqual(next.firstUnread, next.articles[1].key)
+        // A later import may contain older stories; it must still append after the existing queue.
+        let feed = Subscription(name: "Later feed", address: "https://publisher.example/later", kind: "rss")
+        context.insert(feed)
+        for (index, time) in [500.0, 100.0, 100.0].enumerated() {
+            let remote = RemoteArticle(id: "later-\(index)", title: "Later \(index)", url: "https://publisher.example/later/\(index)", text: "", published: Date(timeIntervalSince1970: time))
+            let article = Article(item: remote, subscription: feed)
+            article.queuePosition = index + 4; context.insert(article)
+        }
+        try context.save()
+        try await worker.orderNewImports(after: Set(snapshot.articles.map(\.key)))
+        let final = try await worker.snapshot()
+        XCTAssertEqual(final.articles.map(\.title), ["Story 2", "Story 1", "Story 0", "Later 1", "Later 2", "Later 0"])
+        XCTAssertEqual(final.unreadCount, 5)
     }
 
     @MainActor func testDiskLibraryRelaunchPreservesUnreadAndSavedSelection() async throws {

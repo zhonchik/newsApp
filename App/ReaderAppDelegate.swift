@@ -47,12 +47,14 @@ import os
                     try await worker.migrateContent()
                 } else {
                     let service = FeedService()
+                    let previousKeys = Set(try await worker.snapshot().articles.map(\.key))
                     for feed in try await worker.feedSubscriptions() {
                         try Task.checkCancellation()
                         do {
                             let items = try await service.itemsWithRetry(address: feed.address, kind: feed.kind)
                             try Task.checkCancellation()
                             _ = try await worker.importItems(items, subscriptionID: feed.id)
+                            try await worker.orderNewImports(after: previousKeys)
                         } catch {
                             try Task.checkCancellation()
                             succeeded = false
