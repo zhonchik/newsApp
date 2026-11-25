@@ -230,7 +230,7 @@ struct ArticleWebView {
             decisionHandler(.cancel)
         }
         #if os(iOS)
-        @objc func swipe(_ gesture: UISwipeGestureRecognizer) { move(gesture.direction == .left ? -1 : 1) }
+        @objc func swipe(_ gesture: UISwipeGestureRecognizer) { move(gesture.direction == .left ? 1 : -1) }
         #endif
     }
 }
@@ -239,7 +239,7 @@ final class ReaderWebView: WKWebView {
     var move: ((Int) -> Void)?
     #if os(macOS)
     override func swipe(with event: NSEvent) {
-        if event.deltaX != 0 { move?(event.deltaX < 0 ? -1 : 1) }
+        if event.deltaX != 0 { move?(event.deltaX < 0 ? 1 : -1) }
     }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 124 { move?(1) }

@@ -79,7 +79,7 @@ struct NativeArticleView: View {
         .refreshable { await reload() }
         .simultaneousGesture(DragGesture(minimumDistance: 40).onEnded { value in
             let delta = value.translation
-            if abs(delta.width) > max(70, abs(delta.height) * 2) { move(delta.width < 0 ? -1 : 1) }
+            if abs(delta.width) > max(70, abs(delta.height) * 2) { move(delta.width < 0 ? 1 : -1) }
         })
         #if os(macOS)
         .focusable()
