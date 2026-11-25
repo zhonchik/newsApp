@@ -64,10 +64,10 @@ import SwiftData
     func snapshot(previousIndices: [String: Int]? = nil) throws -> LibrarySnapshot {
         let context = freshContext()
         let subscriptions = try context.fetch(FetchDescriptor<Subscription>(sortBy: [SortDescriptor(\.created)]))
-        let all = try context.fetch(FetchDescriptor<Article>())
+        let all = try context.fetch(FetchDescriptor<Article>()).sorted { $0.key < $1.key }
         var seen = Set<String>()
         let unique = all.filter { !$0.queued && seen.insert(ArticleIdentity.key(url: $0.url, fallback: $0.key)).inserted }
-        let ordered = ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
+        let ordered = ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition }, published: { $0.published })
         let positions = try context.fetch(FetchDescriptor<ReadingPosition>(sortBy: [SortDescriptor(\.changed, order: .reverse)]))
         let hiddenText = Dictionary(subscriptions.map { ($0.id, $0.hiddenText) }, uniquingKeysWith: { first, _ in first })
         return LibrarySnapshot(articles: ordered.map { article in

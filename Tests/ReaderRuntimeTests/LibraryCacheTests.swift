@@ -23,6 +23,30 @@ final class LibraryCacheTests: XCTestCase {
         let updated = try await worker.snapshot()
         XCTAssertTrue(updated.articles[0].read)
     }
+    @MainActor func testSnapshotOrdersUnreadByPublicationAcrossSubscriptions() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        for index in 0..<3 {
+            let feed = Subscription(name: "Feed \(index)", address: "https://publisher.example/feed/\(index)", kind: "rss")
+            context.insert(feed)
+            let remote = RemoteArticle(id: "\(index)", title: "Story \(index)", url: "https://publisher.example/story/\(index)", text: "Saved", published: Date(timeIntervalSince1970: Double(3 - index) * 86400))
+            let article = Article(item: remote, subscription: feed)
+            article.queuePosition = index + 1
+            context.insert(article)
+        }
+        try context.save()
+        let worker = await Task.detached { LibraryWorker(modelContainer: container) }.value
+        let snapshot = try await worker.snapshot()
+        XCTAssertEqual(snapshot.articles.map(\.title), ["Story 2", "Story 1", "Story 0"])
+        XCTAssertEqual(snapshot.unreadCount, 3)
+        let oldest = try XCTUnwrap(snapshot.firstUnread)
+        try await worker.markOpened(oldest)
+        let next = try await worker.snapshot()
+        XCTAssertEqual(next.articles.map(\.title), ["Story 2", "Story 1", "Story 0"])
+        XCTAssertEqual(next.unreadCount, 2)
+        XCTAssertEqual(next.firstUnread, next.articles[1].key)
+    }
+
     @MainActor func testDiskLibraryRelaunchPreservesUnreadAndSavedSelection() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
