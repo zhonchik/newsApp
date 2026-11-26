@@ -64,7 +64,7 @@ import SwiftData
     func snapshot(previousIndices: [String: Int]? = nil) throws -> LibrarySnapshot {
         let context = freshContext()
         let subscriptions = try context.fetch(FetchDescriptor<Subscription>(sortBy: [SortDescriptor(\.created)]))
-        let all = try context.fetch(FetchDescriptor<Article>())
+        let all = try context.fetch(FetchDescriptor<Article>()).sorted { $0.key < $1.key }
         var seen = Set<String>()
         let unique = all.filter { !$0.queued && seen.insert(ArticleIdentity.key(url: $0.url, fallback: $0.key)).inserted }
         let ordered = ReadingQueue.ordered(unique, isRead: { $0.read }, readPosition: { $0.readPosition }, queuePosition: { $0.queuePosition })
@@ -74,6 +74,22 @@ import SwiftData
             ArticleLink(article, hiddenText: hiddenText[article.subscriptionID] ?? "")
         }, subscriptions: subscriptions.map { SubscriptionInfo(id: $0.id, name: $0.name, address: $0.address, kind: $0.kind) }, savedKey: positions.first?.articleKey ?? "", previousIndices: previousIndices)
     }
+    /// Sort only this refresh's new arrivals. Earlier import batches retain their positions.
+    func orderNewImports(after previousKeys: Set<String>) throws {
+        let context = freshContext()
+        let arrivals = try context.fetch(FetchDescriptor<Article>()).filter {
+            !$0.queued && !$0.read && !previousKeys.contains($0.key)
+        }
+        let positions = arrivals.map(\.queuePosition).sorted()
+        let chronological = arrivals.sorted {
+            if $0.published != $1.published { return $0.published < $1.published }
+            if $0.queuePosition != $1.queuePosition { return $0.queuePosition < $1.queuePosition }
+            return $0.key < $1.key
+        }
+        for (article, position) in zip(chronological, positions) { article.queuePosition = position }
+        try context.save()
+    }
+
     func markOpened(_ key: String) throws {
         let context = freshContext()
         guard let article = try context.fetch(FetchDescriptor<Article>(predicate: #Predicate { $0.key == key })).first else { return }

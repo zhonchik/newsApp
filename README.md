@@ -5,7 +5,9 @@ A universal SwiftUI news reader for iPhone, iPad and Mac. One article, room to r
 ## Included
 
 - One persistent reading queue across RSS, Atom and public Telegram channels. Newly discovered stories append at the end; their publication date never moves existing stories.
-- One article on screen, horizontal swipe navigation, VoiceOver previous/next actions, and Mac arrow keys.
+- Links open as articles inside the reader; only “Original article” opens in the system browser.
+- Swipe right (or press the left arrow) to pop a linked article, or return to the previous queue article when at the original article. Swipe left (or press the right arrow) to clear the linked stack and advance the reading queue. Home returns to the original queue article.
+- The original article, linked stack, and each visit’s scroll position survive app launches, including offline. Moving to another queue article discards the previous stack and its positions.
 - Unread count across visible stories; opening an article marks it read.
 - Article headings, paragraphs, lists, links, emphasis and images are retained in a sanitized HTML reader. Publisher scripts are disabled. Images load from publishers and may require connectivity; publisher page styling is replaced with system-aware reader styling.
 - Last-selected article restored on launch. Refresh preserves your current article.

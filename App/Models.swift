@@ -112,17 +112,27 @@ struct LibrarySnapshot: Sendable {
         return articles.first?.key ?? ""
     }
 }
-struct ReaderDocument: Sendable, Equatable {
+struct ReaderDocument: Codable, Sendable, Equatable {
     let hiddenText: String
     let key: String
-    let title: String
+    var title: String
     let source: String
     let url: String
     let text: String
-    let html: String
+    var html: String
     let feedHTML: String
     let contentRevision: Int
     let published: Date
+    func replacingContent(title: String, html: String) -> Self {
+        var copy = self; copy.title = title; copy.html = html
+        return copy
+    }
+    init(url: URL, title: String, html: String) {
+        key = "linked:" + UUID().uuidString
+        hiddenText = ""; self.title = title; source = url.host ?? ""; self.url = url.absoluteString
+        text = ""; self.html = html; feedHTML = ""; published = Date()
+        contentRevision = ContentRules.revision
+    }
     init(_ link: ArticleLink, content: CachedArticle) {
         hiddenText = link.hiddenText
         key = link.key; title = link.title; source = link.source; url = link.url

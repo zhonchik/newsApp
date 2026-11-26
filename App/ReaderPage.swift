@@ -59,7 +59,7 @@ struct ReaderPage: Sendable {
         td,th { border:1px solid GrayText; padding:8px; } footer { margin-top:32px; }
         </style></head><body><header>\(escape(article.source)) · \(escape(article.published.formatted(date: .abbreviated, time: .omitted)))</header>
         \(headline)<article>\(body)</article>
-        <footer><a href="\(escape(article.url))">Read original</a></footer></body></html>
+        <footer><a data-reader-original-link href="\(escape(article.url))">Original article</a></footer></body></html>
         """
         return ReaderPage(input: input, content: .web(html), reusedBody: formatted?.reused == true)
     }

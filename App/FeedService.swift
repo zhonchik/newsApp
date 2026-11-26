@@ -49,18 +49,23 @@ actor FeedService {
         return try FeedParser.parse(data)
     }
     func articleText(url: String) async throws -> String {
+        try await articleContent(url: url).html
+    }
+    func articleContent(url: String) async throws -> (title: String, html: String) {
         let telegram = ContentRules.isTelegram(url)
         let data = try await fetch(telegram ? url + "?embed=1" : url)
         let page = String(decoding: data, as: UTF8.self)
+        let metadata = try SwiftSoup.parse(page, url)
+        let title = try metadata.select("meta[property=og:title]").first()?.attr("content") ?? metadata.title()
         if telegram {
             let document = try SwiftSoup.parse(page, url)
             guard let post = try document.select(".tgme_widget_message").first() else { throw URLError(.cannotParseResponse) }
             let message = try TelegramContent.message(in: post)
             let html = message.html + (try Self.telegramImages(post)) + (try VideoPreview.telegram(post, url: url))
             guard !html.isEmpty else { throw URLError(.cannotParseResponse) }
-            return html
+            return (title.isEmpty ? "Linked article" : title, html)
         }
-        return try await Self.extractArticle(page: page, url: url)
+        return (title.isEmpty ? "Linked article" : title, try await Self.extractArticle(page: page, url: url))
     }
 
     static func extractArticle(page: String, url: String) async throws -> String {

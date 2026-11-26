@@ -23,6 +23,82 @@ final class LibraryCacheTests: XCTestCase {
         let updated = try await worker.snapshot()
         XCTAssertTrue(updated.articles[0].read)
     }
+    @MainActor func testImportBatchOrdersNewArrivalsWithoutReorderingOlderBatches() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        for index in 0..<3 {
+            let feed = Subscription(name: "Feed \(index)", address: "https://publisher.example/feed/\(index)", kind: "rss")
+            context.insert(feed)
+            let remote = RemoteArticle(id: "\(index)", title: "Story \(index)", url: "https://publisher.example/story/\(index)", text: "Saved", published: Date(timeIntervalSince1970: Double(3 - index) * 86400))
+            let article = Article(item: remote, subscription: feed)
+            article.queuePosition = index + 1
+            context.insert(article)
+        }
+        try context.save()
+        let worker = await Task.detached { LibraryWorker(modelContainer: container) }.value
+        try await worker.orderNewImports(after: [])
+        let snapshot = try await worker.snapshot()
+        XCTAssertEqual(snapshot.articles.map(\.title), ["Story 2", "Story 1", "Story 0"])
+        XCTAssertEqual(snapshot.unreadCount, 3)
+        let oldest = try XCTUnwrap(snapshot.firstUnread)
+        try await worker.markOpened(oldest)
+        let next = try await worker.snapshot()
+        XCTAssertEqual(next.articles.map(\.title), ["Story 2", "Story 1", "Story 0"])
+        XCTAssertEqual(next.unreadCount, 2)
+        XCTAssertEqual(next.firstUnread, next.articles[1].key)
+        // A later import may contain older stories; it must still append after the existing queue.
+        let feed = Subscription(name: "Later feed", address: "https://publisher.example/later", kind: "rss")
+        context.insert(feed)
+        for (index, time) in [500.0, 100.0, 100.0].enumerated() {
+            let remote = RemoteArticle(id: "later-\(index)", title: "Later \(index)", url: "https://publisher.example/later/\(index)", text: "", published: Date(timeIntervalSince1970: time))
+            let article = Article(item: remote, subscription: feed)
+            article.queuePosition = index + 4; context.insert(article)
+        }
+        try context.save()
+        try await worker.orderNewImports(after: Set(snapshot.articles.map(\.key)))
+        let final = try await worker.snapshot()
+        XCTAssertEqual(final.articles.map(\.title), ["Story 2", "Story 1", "Story 0", "Later 1", "Later 2", "Later 0"])
+        XCTAssertEqual(final.unreadCount, 5)
+    }
+
+    @MainActor func testDiskLibraryRelaunchPreservesUnreadAndSavedSelection() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let schema = Schema([Article.self, Subscription.self, ReadingPosition.self])
+        let configuration = ModelConfiguration(schema: schema, url: root.appendingPathComponent("library.store"), cloudKitDatabase: .none)
+        var keys: [String] = []
+        do {
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            let context = ModelContext(container)
+            let feed = Subscription(name: "Example", address: "https://publisher.example/feed", kind: "rss")
+            context.insert(feed)
+            for index in 0..<4 {
+                let article = Article(item: item("saved-\(index)"), subscription: feed)
+                article.queuePosition = index + 1
+                article.read = index == 0
+                article.readPosition = index == 0 ? 1 : 0
+                keys.append(article.key); context.insert(article)
+            }
+            context.insert(ReadingPosition(articleKey: keys[0]))
+            try context.save()
+        }
+        for _ in 0..<2 {
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            let worker = await Task.detached { LibraryWorker(modelContainer: container) }.value
+            let cache = MediaCache(directory: root.appendingPathComponent("cache"))
+            let saved = try await worker.launchDocument(cache: cache)
+            XCTAssertEqual(saved?.key, keys[0])
+            try await worker.migrateLibrary()
+            try await worker.migrateContent(cache: cache)
+            let snapshot = try await worker.snapshot()
+            XCTAssertEqual(snapshot.articles.count, 4)
+            XCTAssertEqual(snapshot.unreadCount, 3)
+            XCTAssertEqual(snapshot.savedKey, keys[0])
+            XCTAssertEqual(snapshot.articles.filter { !$0.read }.map(\.key), Array(keys.dropFirst()))
+        }
+    }
+
     @MainActor func testUpgradeCanDisplayLegacySavedBodyBeforeMigration() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -12,6 +12,9 @@ struct ArticleWebView {
     let onFailure: (String) -> Void
     let reload: () async -> Void
     let move: (Int) -> Void
+    var initialOffset: Double = 0
+    var onScroll: (Double) -> Void = { _ in }
+    var openLink: (URL) -> Void = { _ in }
 
     @AppStorage("lightText") private var lightText = "#202020"
     @AppStorage("lightBackground") private var lightBackground = "#FFFFFF"
@@ -27,7 +30,9 @@ struct ArticleWebView {
         config.websiteDataStore = .default()
         config.setURLSchemeHandler(MediaSchemeHandler(), forURLScheme: "reader-media")
         // Isolated app script: publisher scripts remain blocked by the document CSP.
+        coordinator.initialOffset = initialOffset; coordinator.onScroll = onScroll; coordinator.openLink = openLink
         let playbackScript = """
+        \(ReaderPresentation.navigation(initialOffset: initialOffset))
         \(ReaderPresentation.afterFirstFrame)
         document.addEventListener('play', function(event) {
           if (event.target.tagName === 'VIDEO') {
@@ -45,6 +50,9 @@ struct ArticleWebView {
         }, {passive:true});
         """
         config.userContentController.addUserScript(WKUserScript(source: playbackScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        for name in ["readerScroll", "readerLink"] {
+            config.userContentController.add(coordinator, contentWorld: .defaultClient, name: name)
+        }
         config.userContentController.add(coordinator, contentWorld: .defaultClient, name: "cacheVideo")
         config.userContentController.add(coordinator, contentWorld: .defaultClient, name: "readerRefresh")
         config.userContentController.add(coordinator, contentWorld: .defaultClient, name: "readerReady")
@@ -73,6 +81,7 @@ struct ArticleWebView {
         return webView
     }
     @MainActor func update(_ webView: ReaderWebView, coordinator: Coordinator) {
+        coordinator.initialOffset = initialOffset; coordinator.onScroll = onScroll; coordinator.openLink = openLink
         coordinator.move = move; coordinator.reload = reload; coordinator.onDisplay = onDisplay; coordinator.onFailure = onFailure; webView.move = move
         applyBackground(webView)
         guard let article else { return }
@@ -105,6 +114,9 @@ struct ArticleWebView {
         #endif
     }
     @MainActor class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        var initialOffset: Double = 0
+        var onScroll: (Double) -> Void = { _ in }
+        var openLink: (URL) -> Void = { _ in }
         var move: (Int) -> Void
         var reload: () async -> Void
         var onDisplay: () -> Void
@@ -136,7 +148,8 @@ struct ArticleWebView {
         }
         func load(_ html: String, in webView: ReaderWebView) {
             LaunchMetrics.mark("Article navigation started")
-            activeNavigation = webView.loadHTMLString(html, baseURL: URL(string: "https://com.currentreader.current/"))
+            let positionedHTML = html.replacingOccurrences(of: "<html ", with: "<html data-reader-scroll=\"\(initialOffset)\" ")
+            activeNavigation = webView.loadHTMLString(positionedHTML, baseURL: URL(string: "https://com.currentreader.current/"))
             LaunchMetrics.mark("Article navigation submitted")
             loadTimeout?.cancel()
             loadTimeout = Task { @MainActor [weak self, weak webView] in
@@ -179,7 +192,19 @@ struct ArticleWebView {
         }
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame else { return }
-            if message.name == "readerReady", let key = message.body as? String, key == input?.article.key {
+            if message.name == "readerScroll", let offset = message.body as? Double {
+                onScroll(offset)
+            } else if message.name == "readerLink", let value = message.body as? [String: Any],
+                      let raw = value["url"] as? String, let url = URL(string: raw),
+                      ["https", "http"].contains(url.scheme ?? "") {
+                if value["external"] as? Bool == true {
+                    #if os(iOS)
+                    UIApplication.shared.open(url)
+                    #else
+                    NSWorkspace.shared.open(url)
+                    #endif
+                } else { openLink(url) }
+            } else if message.name == "readerReady", let key = message.body as? String, key == input?.article.key {
                 loadTimeout?.cancel()
                 onDisplay()
             } else if message.name == "cacheVideo", let raw = message.body as? String, let url = URL(string: raw), url.scheme == "https" {
@@ -201,13 +226,7 @@ struct ArticleWebView {
             // Allow provider navigation inside the embedded player only.
             if action.targetFrame?.isMainFrame == false { decisionHandler(.allow); return }
             guard action.navigationType == .linkActivated else { decisionHandler(.allow); return }
-            if let url = action.request.url, ["https", "http"].contains(url.scheme ?? "") {
-                #if os(iOS)
-                UIApplication.shared.open(url)
-                #else
-                NSWorkspace.shared.open(url)
-                #endif
-            }
+            if let url = action.request.url { openLink(url) }
             decisionHandler(.cancel)
         }
         #if os(iOS)

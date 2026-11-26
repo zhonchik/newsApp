@@ -18,8 +18,14 @@ struct ReaderView: View {
         NavigationStack {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .task { await library.restore() }
+                .task {
+                    await library.restore()
+                    await library.open()
+                }
                 .toolbar { toolbar }
+                .alert("Couldn’t open link", isPresented: Binding(get: { reader.linkError != nil }, set: { if !$0 { reader.linkError = nil } })) {
+                    Button("OK") { reader.linkError = nil }
+                } message: { Text(reader.linkError ?? "") }
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.visible, for: .navigationBar)
@@ -37,7 +43,10 @@ struct ReaderView: View {
                         if phase == .active { await reader.refresh() }
                     }
                 }
-                .onChange(of: phase) { _, value in if value == .active { Task { await reader.refresh() } } }
+                .onChange(of: phase) { _, value in
+                    if value == .active { Task { await reader.refresh() } }
+                    else { reader.saveHistory() }
+                }
         }
         .tint(Color(red: 0.14, green: 0.54, blue: 0.51))
     }
@@ -66,7 +75,9 @@ struct ReaderView: View {
             }, onFailure: { message in
                 reader.pageFailed(message)
                 Task { await library.open() }
-            }, reload: { await reader.reloadArticle() }, move: reader.move)
+            }, reload: { await reader.reloadArticle() }, move: reader.move,
+               initialOffset: document.map { reader.scrollOffset(for: $0.key) } ?? 0,
+               onScroll: reader.recordScroll, openLink: reader.openLink)
                 .accessibilityAction(named: "Next article") { reader.move(1) }
                 .accessibilityAction(named: "Previous article") { reader.move(-1) }
                 .overlay {
@@ -100,8 +111,15 @@ struct ReaderView: View {
         }
     }
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button(action: reader.home) { Label("Home", systemImage: "house") }
+                .disabled(!reader.canGoHome && !reader.openingLink)
+        }
+        ToolbarItem {
+            if reader.openingLink { ProgressView().accessibilityLabel("Opening linked article") }
+        }
         ToolbarItem(placement: .principal) {
-            UnreadCountLabel(count: reader.unreadCount, updating: reader.isUpdating, failed: reader.updateFailed, message: reader.updateMessage)
+            UnreadCountLabel(count: reader.unreadCount, loaded: reader.queueLoaded, updating: reader.isUpdating, failed: reader.updateFailed, message: reader.updateMessage)
         }
         ToolbarItem {
             Button {
@@ -118,6 +136,7 @@ struct ReaderView: View {
 
 private struct UnreadCountLabel: View {
     let count: Int
+    let loaded: Bool
     let updating: Bool
     let failed: Bool
     let message: String
@@ -125,7 +144,7 @@ private struct UnreadCountLabel: View {
     @State private var dimCount = false
 
     var body: some View {
-        Text("\(count) unread")
+        Text(loaded ? "\(count) unread" : "Loading articles…")
             .font(.caption.monospacedDigit())
             .foregroundStyle(failed ? Color(red: 0.78, green: 0.40, blue: 0.40) : Color.secondary)
             .opacity(dimCount ? 0.35 : 1)
