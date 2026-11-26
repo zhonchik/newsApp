@@ -59,7 +59,7 @@ enum ReaderHyphenation {
     }
 
     static func text(_ text: String, language: String) -> String {
-        let locale = CFLocaleCreate(nil, language as CFString)!
+        let locale = NSLocale(localeIdentifier: language) as CFLocale
         guard CFStringIsHyphenationAvailableForLocale(locale) else { return text }
         let source = text as NSString
         let result = NSMutableString(string: text)
