@@ -1,4 +1,6 @@
 import Foundation
+import NaturalLanguage
+import CoreFoundation
 
 struct ReaderPalette: Sendable, Equatable {
     let lightText: String
@@ -34,6 +36,8 @@ enum ReaderAppearance {
         article, h1 { font-family:ui-serif, Georgia, serif; }
         article { font-size:\(bodyScale)em; line-height:\(lineHeight); }
         article p { margin-block:0 1em; }
+        article, h1 { -webkit-hyphens:auto; hyphens:auto; }
+        pre, code, kbd, samp { -webkit-hyphens:none; hyphens:none; }
         @media (prefers-color-scheme: dark) {
             article { font-weight:\(darkWeight); }
             article :is(strong,b) { font-weight:700; }
@@ -45,4 +49,31 @@ enum ReaderAppearance {
         h2,h3,h4 { line-height:1.3; }
         """
     }
+}
+
+/// Discretionary breaks affect layout only; persisted article text remains untouched.
+enum ReaderHyphenation {
+    static func language(for text: String) -> String {
+        NLLanguageRecognizer.dominantLanguage(for: text)?.rawValue
+            ?? Locale.current.language.languageCode?.identifier ?? "und"
+    }
+
+    static func text(_ text: String, language: String) -> String {
+        let locale = CFLocaleCreate(nil, language as CFString)!
+        guard CFStringIsHyphenationAvailableForLocale(locale) else { return text }
+        let source = text as NSString
+        let result = NSMutableString(string: text)
+        // Walk backwards so inserted characters cannot shift pending UTF-16 offsets.
+        var before = source.length
+        while before > 0 {
+            let offset = CFStringGetHyphenationLocationBeforeIndex(
+                text as CFString, before, CFRange(location: 0, length: source.length), 0, locale, nil
+            )
+            guard offset != kCFNotFound, offset > 0, offset < before else { break }
+            result.insert("\u{00AD}", at: offset)
+            before = offset
+        }
+        return result as String
+    }
+
 }

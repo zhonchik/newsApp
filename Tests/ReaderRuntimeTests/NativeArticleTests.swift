@@ -3,6 +3,16 @@ import ReaderContent
 @testable import ReaderRuntime
 
 final class NativeArticleTests: XCTestCase {
+    func testHyphenationAddsOnlyDiscretionaryBreaks() {
+        let original = "Internationalization and accessibility"
+        let displayed = ReaderHyphenation.text(original, language: "en")
+        XCTAssertTrue(displayed.contains("\u{00AD}"))
+        XCTAssertEqual(displayed.replacingOccurrences(of: "\u{00AD}", with: ""), original)
+        XCTAssertEqual(ReaderHyphenation.text("", language: "en"), "")
+        XCTAssertEqual(ReaderHyphenation.text("12345 😀", language: "en"), "12345 😀")
+        XCTAssertEqual(ReaderHyphenation.text(original, language: "und"), original)
+    }
+
     @MainActor private func page(_ body: String, url: String, hidden: String = "") async -> ReaderPage {
         let subscription = Subscription(name: "Feed", address: "https://example.org/feed", kind: url.contains("t.me") ? "telegram" : "rss")
         let item = RemoteArticle(id: "story", title: "Headline", url: url, text: "", published: Date())
@@ -57,5 +67,7 @@ final class NativeArticleTests: XCTestCase {
         XCTAssertNil(page.nativeBody)
         guard case .web(let html) = page.content else { return XCTFail("Expected table fallback") }
         XCTAssertTrue(html.contains("<td>Cell</td>"))
+        XCTAssertTrue(html.contains("<html lang="))
+        XCTAssertTrue(html.contains("hyphens:auto"))
     }
 }

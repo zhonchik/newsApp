@@ -2,6 +2,7 @@
 import ReaderContent
 #endif
 import Foundation
+import SwiftSoup
 
 struct ReaderPage: Sendable {
     let input: Input
@@ -38,9 +39,10 @@ struct ReaderPage: Sendable {
             return ReaderPage(input: input, content: .native(blocks), reusedBody: formatted.reused)
         }
         let body = formatted?.html ?? "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
+        let language = ReaderHyphenation.language(for: article.title + " " + ((try? SwiftSoup.parse(body).text()) ?? article.text))
         let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
         let html = """
-        <!doctype html><html data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <!doctype html><html lang="\(escape(language))" data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: reader-media:; media-src https: reader-media:; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
         <style>
         \(ReaderAppearance.stylesheet(input.palette))

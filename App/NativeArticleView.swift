@@ -58,7 +58,7 @@ struct NativeArticleView: View {
                 Text("\(article.source) · \(article.published.formatted(date: .abbreviated, time: .omitted))")
                     .font(.caption)
                 if !ContentRules.isTelegram(article.url) {
-                    Text(article.title).font(.system(.title2, design: .serif).bold()).accessibilityAddTraits(.isHeader)
+                    Text(ReaderHyphenation.text(article.title, language: ReaderHyphenation.language(for: article.title + " " + article.text))).font(.system(.title2, design: .serif).bold()).accessibilityAddTraits(.isHeader)
                 }
                 ForEach(content.blocks.indices, id: \.self) { index in
                     block(content.blocks[index])
@@ -120,9 +120,10 @@ struct NativeArticleView: View {
     }
 
     private func attributed(_ runs: [NativeArticleBody.Run]) -> AttributedString {
+        let language = ReaderHyphenation.language(for: runs.map(\.text).joined())
         var result = AttributedString()
         for run in runs {
-            var span = AttributedString(run.text)
+            var span = AttributedString(ReaderHyphenation.text(run.text, language: language))
             var intent: InlinePresentationIntent = []
             if run.bold { intent.insert(.stronglyEmphasized) }
             if run.italic { intent.insert(.emphasized) }
