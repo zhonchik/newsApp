@@ -61,17 +61,28 @@ enum ReaderHyphenation {
     static func text(_ text: String, language: String) -> String {
         let locale = NSLocale(localeIdentifier: language) as CFLocale
         guard CFStringIsHyphenationAvailableForLocale(locale) else { return text }
-        let source = text as NSString
+        var insertions: [Int] = []
+        // The API searches the word at the supplied index, not earlier words in
+        // a paragraph. Tokenize first so punctuation or a short final word cannot
+        // prevent the rest of the paragraph from being hyphenated.
+        text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: .byWords) { word, range, _, _ in
+            guard let word else { return }
+            let length = (word as NSString).length
+            let start = NSRange(range, in: text).location
+            var before = length
+            while before > 0 {
+                let offset = CFStringGetHyphenationLocationBeforeIndex(
+                    word as CFString, before, CFRange(location: 0, length: length), 0, locale, nil
+                )
+                guard offset != kCFNotFound, offset > 0, offset < before else { break }
+                insertions.append(start + offset)
+                before = offset
+            }
+        }
         let result = NSMutableString(string: text)
-        // Walk backwards so inserted characters cannot shift pending UTF-16 offsets.
-        var before = source.length
-        while before > 0 {
-            let offset = CFStringGetHyphenationLocationBeforeIndex(
-                text as CFString, before, CFRange(location: 0, length: source.length), 0, locale, nil
-            )
-            guard offset != kCFNotFound, offset > 0, offset < before else { break }
+        // Insert backwards to preserve UTF-16 offsets, including after emoji.
+        for offset in insertions.sorted(by: >) {
             result.insert("\u{00AD}", at: offset)
-            before = offset
         }
         return result as String
     }

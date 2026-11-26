@@ -13,6 +13,21 @@ final class NativeArticleTests: XCTestCase {
         XCTAssertEqual(ReaderHyphenation.text(original, language: "und"), original)
     }
 
+    func testHyphenationVisitsEveryWordDespitePunctuationAndShortEnding() {
+        for (language, words) in [
+            ("en", ["internationalization", "accessibility"]),
+            ("ru", ["международный", "программирование"])
+        ] {
+            // Dictionary availability depends on the OS; compare paragraph
+            // output with the same OS's individual-word behavior.
+            let paragraph = "😀 " + words.joined(separator: ", ") + " — a!"
+            let expected = "😀 " + words.map { ReaderHyphenation.text($0, language: language) }
+                .joined(separator: ", ") + " — a!"
+            XCTAssertEqual(ReaderHyphenation.text(paragraph, language: language), expected, language)
+            XCTAssertEqual(expected.replacingOccurrences(of: "\u{00AD}", with: ""), paragraph)
+        }
+    }
+
     @MainActor private func page(_ body: String, url: String, hidden: String = "") async -> ReaderPage {
         let subscription = Subscription(name: "Feed", address: "https://example.org/feed", kind: url.contains("t.me") ? "telegram" : "rss")
         let item = RemoteArticle(id: "story", title: "Headline", url: url, text: "", published: Date())
