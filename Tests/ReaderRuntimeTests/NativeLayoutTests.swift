@@ -15,12 +15,12 @@ final class NativeLayoutTests: XCTestCase {
     }
 
     @MainActor func testNativeReaderRestoresSavedScrollOffset() async throws {
-        let document = ReaderDocument(url: URL(string: "https://publisher.example/story")!, title: "Long article", html: "")
-        let body = NativeArticleBody(blocks: (0..<80).map { index in
-            .text(.paragraph, [NativeArticleBody.Run(text: "Paragraph \(index). A long article keeps its reading position when reopened.")])
-        })
+        let html = (0..<80).map { "<p>Paragraph \($0). A long article keeps its reading position when reopened.</p>" }.joined()
+        let document = ReaderDocument(url: URL(string: "https://publisher.example/story")!, title: "Long article", html: html)
+        let page = await ReaderPage.prepare(.init(article: document, hiddenText: "", palette: .saved(), version: 0))
+        let body = try XCTUnwrap(page.displayBody)
         let host = NSHostingView(rootView: NativeArticleView(content: body, article: document, palette: .saved(),
-            onDisplay: {}, reload: {}, move: { _ in }, initialOffset: 420))
+            onDisplay: {}, reload: {}, move: { _ in }, displayText: page.displayText, initialOffset: 420))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 650), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host; window.orderFrontRegardless()
         defer { window.orderOut(nil) }
@@ -65,8 +65,8 @@ final class NativeLayoutTests: XCTestCase {
             let page = await ReaderPage.prepare(input, cache: cache)
             let laidOut = expectation(description: "Native article laid out")
             laidOut.assertForOverFulfill = false
-            let view = NativeArticleView(content: try XCTUnwrap(page.nativeBody), article: doc, palette: input.palette,
-                                         onDisplay: { laidOut.fulfill() }, reload: {}, move: { _ in }, cache: cache)
+            let view = NativeArticleView(content: try XCTUnwrap(page.displayBody), article: doc, palette: input.palette,
+                                         onDisplay: { laidOut.fulfill() }, reload: {}, move: { _ in }, displayText: page.displayText, imageRatios: page.imageRatios, cache: cache)
             let host = NSHostingView(rootView: view)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 650), styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false

@@ -14,7 +14,7 @@ struct NativeArticleView: View {
     let reload: () async -> Void
     let move: (Int) -> Void
     var displayTitle: String? = nil
-    var displayText: [Int: AttributedString] = [:]
+    let displayText: [Int: AttributedString]
     var imageRatios: [URL: Double] = [:]
     var initialOffset: Double = 0
     var onScroll: (Double) -> Void = { _ in }
