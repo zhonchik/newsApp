@@ -3,6 +3,31 @@ import ReaderContent
 @testable import ReaderRuntime
 
 final class NativeArticleTests: XCTestCase {
+    func testHyphenationAddsOnlyDiscretionaryBreaks() {
+        let original = "Internationalization and accessibility"
+        let displayed = ReaderHyphenation.text(original, language: "en")
+        XCTAssertTrue(displayed.contains("\u{00AD}"))
+        XCTAssertEqual(displayed.replacingOccurrences(of: "\u{00AD}", with: ""), original)
+        XCTAssertEqual(ReaderHyphenation.text("", language: "en"), "")
+        XCTAssertEqual(ReaderHyphenation.text("12345 😀", language: "en"), "12345 😀")
+        XCTAssertEqual(ReaderHyphenation.text(original, language: "und"), original)
+    }
+
+    func testHyphenationVisitsEveryWordDespitePunctuationAndShortEnding() {
+        for (language, words) in [
+            ("en", ["internationalization", "accessibility"]),
+            ("ru", ["международный", "программирование"])
+        ] {
+            // Dictionary availability depends on the OS; compare paragraph
+            // output with the same OS's individual-word behavior.
+            let paragraph = "😀 " + words.joined(separator: ", ") + " — a!"
+            let expected = "😀 " + words.map { ReaderHyphenation.text($0, language: language) }
+                .joined(separator: ", ") + " — a!"
+            XCTAssertEqual(ReaderHyphenation.text(paragraph, language: language), expected, language)
+            XCTAssertEqual(expected.replacingOccurrences(of: "\u{00AD}", with: ""), paragraph)
+        }
+    }
+
     @MainActor private func page(_ body: String, url: String, hidden: String = "") async -> ReaderPage {
         let subscription = Subscription(name: "Feed", address: "https://example.org/feed", kind: url.contains("t.me") ? "telegram" : "rss")
         let item = RemoteArticle(id: "story", title: "Headline", url: url, text: "", published: Date())
@@ -10,6 +35,35 @@ final class NativeArticleTests: XCTestCase {
         let doc = ReaderDocument(link, content: CachedArticle(text: "", html: body, feedHTML: body))
         let cache = MediaCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         return await ReaderPage.prepare(.init(article: doc, hiddenText: hidden, palette: .saved(), version: 0), cache: cache)
+    }
+
+    func testPreparedHyphenationPreservesSourceAndFormatting() async throws {
+        let prepared = await page("<p><a href='https://example.org/link'><strong>Internationalization</strong></a> accessibility.</p>", url: "https://example.org/story")
+        let source = try XCTUnwrap(prepared.nativeBody)
+        let display = try XCTUnwrap(prepared.displayBody)
+        guard case .text(_, let original) = source.blocks[0],
+              case .text(_, let rendered) = display.blocks[0] else { return XCTFail("Expected text") }
+        XCTAssertFalse(original.map(\.text).joined().contains("\u{00AD}"))
+        XCTAssertTrue(rendered.map(\.text).joined().contains("\u{00AD}"))
+        XCTAssertEqual(original, rendered.map { run in
+            var plain = run
+            plain.text = plain.text.replacingOccurrences(of: "\u{00AD}", with: "")
+            return plain
+        })
+        XCTAssertNotNil(prepared.displayTitle)
+        let text = try XCTUnwrap(prepared.displayText[0])
+        XCTAssertEqual(String(text.characters), rendered.map(\.text).joined())
+        XCTAssertTrue(text.runs.contains { $0.link?.absoluteString == "https://example.org/link" })
+        XCTAssertTrue(text.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+    }
+
+    func testImageRatiosUseOriginalURLsAndIgnoreInvalidDimensions() {
+        let ratios = ReaderPage.imageAspectRatios(html: """
+        <img src="reader-media://cached" data-reader-src="https://example.org/photo" width="300" height="600">
+        <img src="https://example.org/invalid" width="300" height="0">
+        <img src="https://example.org/unknown">
+        """)
+        XCTAssertEqual(ratios, [URL(string: "https://example.org/photo")!: 0.5])
     }
 
     func testPreviousPageRemainsAvailableWhileAnotherArticleIsPreparing() async {
@@ -57,5 +111,7 @@ final class NativeArticleTests: XCTestCase {
         XCTAssertNil(page.nativeBody)
         guard case .web(let html) = page.content else { return XCTFail("Expected table fallback") }
         XCTAssertTrue(html.contains("<td>Cell</td>"))
+        XCTAssertTrue(html.contains("<html lang="))
+        XCTAssertTrue(html.contains("hyphens:auto"))
     }
 }

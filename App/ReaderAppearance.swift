@@ -1,4 +1,6 @@
 import Foundation
+import NaturalLanguage
+import CoreFoundation
 
 struct ReaderPalette: Sendable, Equatable {
     let lightText: String
@@ -34,6 +36,8 @@ enum ReaderAppearance {
         article, h1 { font-family:ui-serif, Georgia, serif; }
         article { font-size:\(bodyScale)em; line-height:\(lineHeight); }
         article p { margin-block:0 1em; }
+        article, h1 { -webkit-hyphens:auto; hyphens:auto; }
+        pre, code, kbd, samp { -webkit-hyphens:none; hyphens:none; }
         @media (prefers-color-scheme: dark) {
             article { font-weight:\(darkWeight); }
             article :is(strong,b) { font-weight:700; }
@@ -45,4 +49,42 @@ enum ReaderAppearance {
         h2,h3,h4 { line-height:1.3; }
         """
     }
+}
+
+/// Discretionary breaks affect layout only; persisted article text remains untouched.
+enum ReaderHyphenation {
+    static func language(for text: String) -> String {
+        NLLanguageRecognizer.dominantLanguage(for: text)?.rawValue
+            ?? Locale.current.language.languageCode?.identifier ?? "und"
+    }
+
+    static func text(_ text: String, language: String) -> String {
+        let locale = NSLocale(localeIdentifier: language) as CFLocale
+        guard CFStringIsHyphenationAvailableForLocale(locale) else { return text }
+        var insertions: [Int] = []
+        // The API searches the word at the supplied index, not earlier words in
+        // a paragraph. Tokenize first so punctuation or a short final word cannot
+        // prevent the rest of the paragraph from being hyphenated.
+        text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: .byWords) { word, range, _, _ in
+            guard let word else { return }
+            let length = (word as NSString).length
+            let start = NSRange(range, in: text).location
+            var before = length
+            while before > 0 {
+                let offset = CFStringGetHyphenationLocationBeforeIndex(
+                    word as CFString, before, CFRange(location: 0, length: length), 0, locale, nil
+                )
+                guard offset != kCFNotFound, offset > 0, offset < before else { break }
+                insertions.append(start + offset)
+                before = offset
+            }
+        }
+        let result = NSMutableString(string: text)
+        // Insert backwards to preserve UTF-16 offsets, including after emoji.
+        for offset in insertions.sorted(by: >) {
+            result.insert("\u{00AD}", at: offset)
+        }
+        return result as String
+    }
+
 }

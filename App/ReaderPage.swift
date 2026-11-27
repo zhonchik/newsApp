@@ -2,6 +2,8 @@
 import ReaderContent
 #endif
 import Foundation
+import SwiftSoup
+import SwiftUI
 
 struct ReaderPage: Sendable {
     let input: Input
@@ -15,6 +17,10 @@ struct ReaderPage: Sendable {
         return nil
     }
     let reusedBody: Bool
+    var displayBody: NativeArticleBody? = nil
+    var displayTitle: String? = nil
+    var displayText: [Int: AttributedString] = [:]
+    var imageRatios: [URL: Double] = [:]
 
     struct Input: Equatable, Sendable {
         let article: ReaderDocument
@@ -28,6 +34,21 @@ struct ReaderPage: Sendable {
         if prepared.input.article.key == input.article.key && prepared.input.hiddenText != input.hiddenText { return nil }
         return prepared
     }
+    static func imageAspectRatios(html: String) -> [URL: Double] {
+        guard let images = try? SwiftSoup.parse(html).select("img[width][height]") else { return [:] }
+        var ratios: [URL: Double] = [:]
+        for image in images.array() {
+            let original = (try? image.attr("data-reader-src")) ?? ""
+            guard let raw = try? image.attr("src"), let url = URL(string: original.isEmpty ? raw : original),
+                  let w = try? image.attr("width"), let width = Double(w),
+                  let h = try? image.attr("height"), let height = Double(h),
+                  width.isFinite, height.isFinite, width > 0, height > 0,
+                  (width / height).isFinite else { continue }
+            ratios[url] = width / height
+        }
+        return ratios
+    }
+
     static func prepare(_ input: Input, cache: MediaCache = .shared) async -> ReaderPage {
         let article = input.article
         func escape(_ text: String) -> String {
@@ -35,12 +56,46 @@ struct ReaderPage: Sendable {
         }
         let formatted = try? await cache.formattedBody(article, hiddenText: input.hiddenText)
         if let formatted, let blocks = formatted.nativeBody {
-            return ReaderPage(input: input, content: .native(blocks), reusedBody: formatted.reused)
+            // Prepare once away from the main actor, never during SwiftUI updates.
+            let display = await Task.detached(priority: .userInitiated) {
+                let title = ReaderHyphenation.text(article.title,
+                    language: ReaderHyphenation.language(for: article.title + " " + article.text))
+                let body = NativeArticleBody(blocks: blocks.blocks.map { block in
+                    guard case .text(let style, let runs) = block else { return block }
+                    let language = ReaderHyphenation.language(for: runs.map(\.text).joined())
+                    return .text(style, runs.map { run in
+                        var displayed = run
+                        displayed.text = ReaderHyphenation.text(run.text, language: language)
+                        return displayed
+                    })
+                })
+                var text: [Int: AttributedString] = [:]
+                for (index, block) in body.blocks.enumerated() {
+                    guard case .text(_, let runs) = block else { continue }
+                    var result = AttributedString()
+                    for run in runs {
+                        var span = AttributedString(run.text)
+                        var intent: InlinePresentationIntent = []
+                        if run.bold { intent.insert(.stronglyEmphasized) }
+                        if run.italic { intent.insert(.emphasized) }
+                        span.inlinePresentationIntent = intent
+                        span.link = run.link
+                        if run.link != nil { span.underlineStyle = .single }
+                        result.append(span)
+                    }
+                    text[index] = result
+                }
+                let ratios = imageAspectRatios(html: formatted.html)
+                return (title, body, text, ratios)
+            }.value
+            return ReaderPage(input: input, content: .native(blocks), reusedBody: formatted.reused,
+                              displayBody: display.1, displayTitle: display.0, displayText: display.2, imageRatios: display.3)
         }
         let body = formatted?.html ?? "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
+        let language = ReaderHyphenation.language(for: article.title + " " + ((try? SwiftSoup.parse(body).text()) ?? article.text))
         let headline = ContentRules.isTelegram(article.url) ? "" : "<h1>\(escape(article.title))</h1>"
         let html = """
-        <!doctype html><html data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <!doctype html><html lang="\(escape(language))" data-reader-key="\(escape(article.key))"><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: reader-media:; media-src https: reader-media:; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'">
         <style>
         \(ReaderAppearance.stylesheet(input.palette))

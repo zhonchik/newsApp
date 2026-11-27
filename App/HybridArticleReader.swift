@@ -29,7 +29,7 @@ struct HybridArticleReader: View {
             if let input, let page = ReaderPage.visible(for: input, launch: launchPage, prepared: prepared) {
                 let isRequestedPage = page.input == input
                 if let native = page.nativeBody {
-                    NativeArticleView(content: native, article: page.input.article, palette: page.input.palette, onDisplay: { if isRequestedPage { onDisplay("Native") } }, reload: { if isRequestedPage { await reload() } }, move: move, initialOffset: initialOffset, onScroll: { onScroll(page.input.article.key, $0) }, openLink: { if isRequestedPage { openLink($0) } })
+                    NativeArticleView(content: page.displayBody ?? native, article: page.input.article, palette: page.input.palette, onDisplay: { if isRequestedPage { onDisplay("Native") } }, reload: { if isRequestedPage { await reload() } }, move: move, displayTitle: page.displayTitle, displayText: page.displayText, imageRatios: page.imageRatios, initialOffset: initialOffset, onScroll: { onScroll(page.input.article.key, $0) }, openLink: { if isRequestedPage { openLink($0) } })
                         .id(page.input.article.key)
                 } else {
                     ArticleWebView(launchPage: page, article: page.input.article, hiddenText: page.input.hiddenText,

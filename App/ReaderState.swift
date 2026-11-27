@@ -35,11 +35,14 @@ import os
 
     var firstUnread: String? { queue.firstUnread }
 
-    @Published private(set) var history = ReaderHistory()
+    // Navigation publishes document changes; offset bookkeeping must not invalidate views.
+    private(set) var history = ReaderHistory()
     @Published var openingLink = false
     @Published var linkError: String?
     private var linkTask: Task<Void, Never>?
     private var historySave: Task<Void, Never>?
+    private let historyWriter = ReaderHistoryWriter()
+    private var historyRevision: UInt64 = 0
     private var navigationID = UUID()
     private static var historyFile: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -57,14 +60,31 @@ import os
     }
     func saveHistory() {
         historySave?.cancel()
-        do {
-            let file = Self.historyFile
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(history).write(to: file, options: .atomic)
-        } catch { updateFailed = true; updateMessage = "Could not save reading position: " + error.localizedDescription }
+        historyRevision += 1
+        let revision = historyRevision
+        let snapshot = history
+        let file = Self.historyFile
+        let writer = historyWriter
+        #if os(iOS)
+        let background = UIApplication.shared.beginBackgroundTask(withName: "Save reading position")
+        #endif
+        Task {
+            defer {
+                #if os(iOS)
+                if background != .invalid { UIApplication.shared.endBackgroundTask(background) }
+                #endif
+            }
+            do { try await writer.save(snapshot, to: file, revision: revision) }
+            catch {
+                updateFailed = true
+                updateMessage = "Could not save reading position: " + error.localizedDescription
+            }
+        }
     }
+
     func recordScroll(key: String, offset: Double) {
-        guard history.entries.contains(where: { $0.document.key == key }) else { return }
+        guard offset.isFinite, let entry = history.entries.first(where: { $0.document.key == key }),
+              abs(entry.offset - max(0, offset)) >= 0.5 else { return }
         history.scroll(key: key, offset: offset)
         historySave?.cancel()
         historySave = Task { [weak self] in

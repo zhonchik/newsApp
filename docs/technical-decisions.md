@@ -24,6 +24,12 @@ Open the store and prepare startup content asynchronously. Check saved history a
 
 Evidence: [CurrentApp](../App/CurrentApp.swift), [LibraryWorker](../App/LibraryWorker.swift), [ReaderState](../App/ReaderState.swift), [ArticlePreparation](../App/ArticlePreparation.swift), and merged PRs `#8` and `#9`.
 
+The scrolling regression reported during PR #17 reinforces this constraint: language detection and hyphenation belong in background page preparation, with immutable results reused by the native view. Apply the [scrolling and rendering performance rules](../AGENTS.md#protect-scrolling-and-rendering-performance) to future rendering changes. This clarification follows the user's request to prevent recurrence; commit `99a1050` moves hyphenation out of view evaluation. On-device performance verification remains distinct from functional tests.
+
+Scroll offsets are non-published bookkeeping; navigation continues publishing document changes. Serialize history snapshots and atomic writes on a dedicated actor, rejecting older revisions. Prepare attributed text alongside hyphenation and reuse it during view updates. Native image frames reserve declared proportions, falling back to a stable 16:9 frame with the complete image fitted inside when dimensions are unknown. Keep the eager article stack for predictable scroll restoration; avoid repeated content preparation within it.
+
+Evidence: the user's request to address all four rendering risks, [ReaderHistoryWriter](../App/ReaderHistory.swift), [ReaderPage](../App/ReaderPage.swift), and [NativeArticleView](../App/NativeArticleView.swift). Device profiling remains required to quantify scrolling improvements.
+
 ## T4. Share content rules across native and web rendering
 
 Use format semantics and user settings for extraction, sanitization, and media normalization. Follow the feed-agnostic policy in [AGENTS.md](../AGENTS.md). Preserve story boundaries and run formatting and filtering against the document being presented. Reuse formatted bodies only when the source content, filters, and cached-media availability still match.
