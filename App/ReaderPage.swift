@@ -16,6 +16,8 @@ struct ReaderPage: Sendable {
         return nil
     }
     let reusedBody: Bool
+    var displayBody: NativeArticleBody? = nil
+    var displayTitle: String? = nil
 
     struct Input: Equatable, Sendable {
         let article: ReaderDocument
@@ -36,7 +38,23 @@ struct ReaderPage: Sendable {
         }
         let formatted = try? await cache.formattedBody(article, hiddenText: input.hiddenText)
         if let formatted, let blocks = formatted.nativeBody {
-            return ReaderPage(input: input, content: .native(blocks), reusedBody: formatted.reused)
+            // Prepare once away from the main actor, never during SwiftUI updates.
+            let display = await Task.detached(priority: .userInitiated) {
+                let title = ReaderHyphenation.text(article.title,
+                    language: ReaderHyphenation.language(for: article.title + " " + article.text))
+                let body = NativeArticleBody(blocks: blocks.blocks.map { block in
+                    guard case .text(let style, let runs) = block else { return block }
+                    let language = ReaderHyphenation.language(for: runs.map(\.text).joined())
+                    return .text(style, runs.map { run in
+                        var displayed = run
+                        displayed.text = ReaderHyphenation.text(run.text, language: language)
+                        return displayed
+                    })
+                })
+                return (title, body)
+            }.value
+            return ReaderPage(input: input, content: .native(blocks), reusedBody: formatted.reused,
+                              displayBody: display.1, displayTitle: display.0)
         }
         let body = formatted?.html ?? "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
         let language = ReaderHyphenation.language(for: article.title + " " + ((try? SwiftSoup.parse(body).text()) ?? article.text))

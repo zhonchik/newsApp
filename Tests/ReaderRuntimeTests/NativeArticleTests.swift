@@ -37,6 +37,22 @@ final class NativeArticleTests: XCTestCase {
         return await ReaderPage.prepare(.init(article: doc, hiddenText: hidden, palette: .saved(), version: 0), cache: cache)
     }
 
+    func testPreparedHyphenationPreservesSourceAndFormatting() async throws {
+        let prepared = await page("<p><a href='https://example.org/link'><strong>Internationalization</strong></a> accessibility.</p>", url: "https://example.org/story")
+        let source = try XCTUnwrap(prepared.nativeBody)
+        let display = try XCTUnwrap(prepared.displayBody)
+        guard case .text(_, let original) = source.blocks[0],
+              case .text(_, let rendered) = display.blocks[0] else { return XCTFail("Expected text") }
+        XCTAssertFalse(original.map(\.text).joined().contains("\u{00AD}"))
+        XCTAssertTrue(rendered.map(\.text).joined().contains("\u{00AD}"))
+        XCTAssertEqual(original, rendered.map { run in
+            var plain = run
+            plain.text = plain.text.replacingOccurrences(of: "\u{00AD}", with: "")
+            return plain
+        })
+        XCTAssertNotNil(prepared.displayTitle)
+    }
+
     func testPreviousPageRemainsAvailableWhileAnotherArticleIsPreparing() async {
         let first = await page("<p>One</p>", url: "https://example.org/one")
         let second = await page("<p>Two</p>", url: "https://example.org/two")
