@@ -3,6 +3,7 @@ import ReaderContent
 #endif
 import Foundation
 import SwiftSoup
+import SwiftUI
 
 struct ReaderPage: Sendable {
     let input: Input
@@ -18,6 +19,8 @@ struct ReaderPage: Sendable {
     let reusedBody: Bool
     var displayBody: NativeArticleBody? = nil
     var displayTitle: String? = nil
+    var displayText: [Int: AttributedString] = [:]
+    var imageRatios: [URL: Double] = [:]
 
     struct Input: Equatable, Sendable {
         let article: ReaderDocument
@@ -31,6 +34,21 @@ struct ReaderPage: Sendable {
         if prepared.input.article.key == input.article.key && prepared.input.hiddenText != input.hiddenText { return nil }
         return prepared
     }
+    static func imageAspectRatios(html: String) -> [URL: Double] {
+        guard let images = try? SwiftSoup.parse(html).select("img[width][height]") else { return [:] }
+        var ratios: [URL: Double] = [:]
+        for image in images.array() {
+            let original = (try? image.attr("data-reader-src")) ?? ""
+            guard let raw = try? image.attr("src"), let url = URL(string: original.isEmpty ? raw : original),
+                  let w = try? image.attr("width"), let width = Double(w),
+                  let h = try? image.attr("height"), let height = Double(h),
+                  width.isFinite, height.isFinite, width > 0, height > 0,
+                  (width / height).isFinite else { continue }
+            ratios[url] = width / height
+        }
+        return ratios
+    }
+
     static func prepare(_ input: Input, cache: MediaCache = .shared) async -> ReaderPage {
         let article = input.article
         func escape(_ text: String) -> String {
@@ -51,10 +69,27 @@ struct ReaderPage: Sendable {
                         return displayed
                     })
                 })
-                return (title, body)
+                var text: [Int: AttributedString] = [:]
+                for (index, block) in body.blocks.enumerated() {
+                    guard case .text(_, let runs) = block else { continue }
+                    var result = AttributedString()
+                    for run in runs {
+                        var span = AttributedString(run.text)
+                        var intent: InlinePresentationIntent = []
+                        if run.bold { intent.insert(.stronglyEmphasized) }
+                        if run.italic { intent.insert(.emphasized) }
+                        span.inlinePresentationIntent = intent
+                        span.link = run.link
+                        if run.link != nil { span.underlineStyle = .single }
+                        result.append(span)
+                    }
+                    text[index] = result
+                }
+                let ratios = imageAspectRatios(html: formatted.html)
+                return (title, body, text, ratios)
             }.value
             return ReaderPage(input: input, content: .native(blocks), reusedBody: formatted.reused,
-                              displayBody: display.1, displayTitle: display.0)
+                              displayBody: display.1, displayTitle: display.0, displayText: display.2, imageRatios: display.3)
         }
         let body = formatted?.html ?? "<p>" + escape(article.text).replacingOccurrences(of: "\n", with: "<br>") + "</p>"
         let language = ReaderHyphenation.language(for: article.title + " " + ((try? SwiftSoup.parse(body).text()) ?? article.text))

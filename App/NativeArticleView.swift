@@ -14,6 +14,8 @@ struct NativeArticleView: View {
     let reload: () async -> Void
     let move: (Int) -> Void
     var displayTitle: String? = nil
+    var displayText: [Int: AttributedString] = [:]
+    var imageRatios: [URL: Double] = [:]
     var initialOffset: Double = 0
     var onScroll: (Double) -> Void = { _ in }
     var openLink: (URL) -> Void = { _ in }
@@ -54,6 +56,7 @@ struct NativeArticleView: View {
         return Color(red: Double(rgb >> 16) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
     }
     var body: some View {
+        let typeface = bodyTypeface
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("\(article.source) · \(article.published.formatted(date: .abbreviated, time: .omitted))")
@@ -62,7 +65,7 @@ struct NativeArticleView: View {
                     Text(displayTitle ?? article.title).font(.system(.title2, design: .serif).bold()).accessibilityAddTraits(.isHeader)
                 }
                 ForEach(content.blocks.indices, id: \.self) { index in
-                    block(content.blocks[index])
+                    block(content.blocks[index], index: index, typeface: typeface)
                 }
                 if let url = URL(string: article.url) { Link(destination: url) { Text("Original article").underline() }
                     .environment(\.openURL, OpenURLAction { .systemAction($0) }) }
@@ -92,10 +95,9 @@ struct NativeArticleView: View {
         #endif
     }
 
-    @ViewBuilder private func block(_ block: NativeArticleBody.Block) -> some View {
+    @ViewBuilder private func block(_ block: NativeArticleBody.Block, index: Int, typeface: PlatformFont) -> some View {
         switch block {
-        case .text(let style, let runs):
-            let typeface = bodyTypeface
+        case .text(let style, _):
             let font: Font = switch style {
             case .heading: .system(.title2, design: .serif).bold()
             case .subheading: .system(.headline, design: .serif)
@@ -104,15 +106,15 @@ struct NativeArticleView: View {
             }
             let naturalHeight = typeface.ascender - typeface.descender + typeface.leading
             let spacing = max(0, typeface.pointSize * ReaderAppearance.lineHeight - naturalHeight)
-            Text(attributed(runs)).font(font).textSelection(.enabled)
+            Text(displayText[index] ?? AttributedString()).font(font).textSelection(.enabled)
                 .lineSpacing(style == .paragraph || style == .quote ? spacing : 5)
                 .padding(.leading, style == .quote ? 12 : 0)
                 .overlay(alignment: .leading) { if style == .quote { Rectangle().fill(.tint).frame(width: 3) } }
                 .accessibilityAddTraits(style == .heading || style == .subheading ? .isHeader : [])
         case .image(let url, let alt, let link, let original):
             if let link {
-                Link(destination: link) { ArticlePhoto(url: url, alt: alt, originalSize: original, cache: cache) }
-            } else { ArticlePhoto(url: url, alt: alt, originalSize: original, cache: cache) }
+                Link(destination: link) { ArticlePhoto(url: url, alt: alt, originalSize: original, aspectRatio: imageRatios[url] ?? 16 / 9, cache: cache) }
+            } else { ArticlePhoto(url: url, alt: alt, originalSize: original, aspectRatio: imageRatios[url] ?? 16 / 9, cache: cache) }
         case .video(let url, let poster):
             ArticleVideo(url: url, poster: poster, cache: cache).id(url)
         case .youtube(let id):
@@ -120,38 +122,29 @@ struct NativeArticleView: View {
         }
     }
 
-    private func attributed(_ runs: [NativeArticleBody.Run]) -> AttributedString {
-        var result = AttributedString()
-        for run in runs {
-            var span = AttributedString(run.text)
-            var intent: InlinePresentationIntent = []
-            if run.bold { intent.insert(.stronglyEmphasized) }
-            if run.italic { intent.insert(.emphasized) }
-            span.inlinePresentationIntent = intent
-            span.link = run.link
-            if run.link != nil { span.underlineStyle = .single }
-            result.append(span)
-        }
-        return result
-    }
+
 }
 
 private struct ArticlePhoto: View {
     let url: URL
     let alt: String
     var originalSize = false
+    var aspectRatio: Double = 16 / 9
     var cache = MediaCache.shared
     @State private var bitmap: CGImage?
     @State private var failed = false
     var body: some View {
-        Group {
-            if let bitmap {
-                Image(bitmap, scale: 1, label: Text(alt.isEmpty ? "Article image" : alt)).resizable().scaledToFit()
-                    .frame(maxWidth: originalSize ? CGFloat(bitmap.width) : .infinity)
-            } else if failed {
-                Link(alt.isEmpty ? "Open image" : alt, destination: url)
-            } else { ProgressView().frame(maxWidth: .infinity, minHeight: 80) }
-        }
+        Color.clear
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .overlay {
+                if let bitmap {
+                    Image(bitmap, scale: 1, label: Text(alt.isEmpty ? "Article image" : alt))
+                        .resizable().scaledToFit()
+                        .frame(maxWidth: originalSize ? CGFloat(bitmap.width) : .infinity)
+                } else if failed {
+                    Link(alt.isEmpty ? "Open image" : alt, destination: url)
+                } else { ProgressView() }
+            }
         .accessibilityLabel(alt.isEmpty ? "Article image" : alt)
         .task(id: url) {
             bitmap = nil; failed = false

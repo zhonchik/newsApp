@@ -51,6 +51,19 @@ final class NativeArticleTests: XCTestCase {
             return plain
         })
         XCTAssertNotNil(prepared.displayTitle)
+        let text = try XCTUnwrap(prepared.displayText[0])
+        XCTAssertEqual(String(text.characters), rendered.map(\.text).joined())
+        XCTAssertTrue(text.runs.contains { $0.link?.absoluteString == "https://example.org/link" })
+        XCTAssertTrue(text.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+    }
+
+    func testImageRatiosUseOriginalURLsAndIgnoreInvalidDimensions() {
+        let ratios = ReaderPage.imageAspectRatios(html: """
+        <img src="reader-media://cached" data-reader-src="https://example.org/photo" width="300" height="600">
+        <img src="https://example.org/invalid" width="300" height="0">
+        <img src="https://example.org/unknown">
+        """)
+        XCTAssertEqual(ratios, [URL(string: "https://example.org/photo")!: 0.5])
     }
 
     func testPreviousPageRemainsAvailableWhileAnotherArticleIsPreparing() async {

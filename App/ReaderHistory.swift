@@ -1,8 +1,8 @@
 import Foundation
 
 /// One queue article and its linked descendants. Each visit has its own scroll offset.
-struct ReaderHistory: Codable, Equatable {
-    struct Entry: Codable, Equatable {
+struct ReaderHistory: Codable, Equatable, Sendable {
+    struct Entry: Codable, Equatable, Sendable {
         var document: ReaderDocument
         var offset: Double = 0
     }
@@ -34,5 +34,17 @@ struct ReaderHistory: Codable, Equatable {
     mutating func scroll(key: String, offset: Double) {
         guard offset.isFinite, let index = entries.firstIndex(where: { $0.document.key == key }) else { return }
         entries[index].offset = max(0, offset)
+    }
+}
+
+/// Serializes disk writes off the UI actor and rejects out-of-order snapshots.
+actor ReaderHistoryWriter {
+    private var latestRevision: UInt64 = 0
+    func save(_ history: ReaderHistory, to file: URL, revision: UInt64) throws {
+        guard revision > latestRevision else { return }
+        let data = try JSONEncoder().encode(history)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: file, options: .atomic)
+        latestRevision = revision
     }
 }
